@@ -40,8 +40,8 @@
       </a>
 
       <nav class="main-nav" aria-label="Navegação principal">
-        <a href="#loja">Loja</a>
-        <a href="#contato">Contato</a>
+        <button type="button" data-scroll-target="#loja">Loja</button>
+        <button type="button" data-scroll-target="#contato">Contato</button>
       </nav>
 
       <div class="header-actions">
@@ -68,11 +68,15 @@
             fio afiado e compra segura.
           </p>
           <div class="hero-actions">
-            <a class="button button-primary" href="#loja">Comprar agora</a>
+            <button class="button button-primary" type="button" data-scroll-target="#loja">Comprar agora</button>
             <button class="button button-ghost" type="button" data-open-auth>Entrar</button>
           </div>
         </div>
       </section>
+
+      <div class="announcement-bar" data-setting="announcementText">
+        Frete gratis em pedidos selecionados e atendimento pelo WhatsApp.
+      </div>
 
       <section class="store-shell" id="loja" aria-labelledby="store-title">
         <div class="section-heading">
@@ -103,6 +107,21 @@
               <option value="price-desc">Maior preço</option>
               <option value="stock">Pronta entrega</option>
             </select>
+          </label>
+
+          <label class="sort-field">
+            <span>Preço máximo</span>
+            <input id="maxPriceInput" type="number" min="0" step="10" placeholder="Sem limite" />
+          </label>
+
+          <label class="checkbox-field compact-check">
+            <input id="readyOnlyInput" type="checkbox" />
+            <span>Pronta entrega</span>
+          </label>
+
+          <label class="checkbox-field compact-check">
+            <input id="favoritesOnlyInput" type="checkbox" />
+            <span>Favoritos</span>
           </label>
         </div>
 
@@ -183,6 +202,7 @@
         <p class="eyebrow">Checkout</p>
         <h2 id="checkout-title">Finalizar pedido</h2>
         <form id="checkoutForm" class="checkout-form">
+          <div class="checkout-customer wide-field" data-checkout-customer></div>
           <label>
             <span>CEP</span>
             <input name="cep" type="text" inputmode="numeric" placeholder="00000-000" required />

@@ -20,8 +20,12 @@ const state = {
     category: "todos",
     search: "",
     sort: "featured",
+    maxPrice: "",
+    readyOnly: false,
+    favoritesOnly: false,
   },
   cart: JSON.parse(localStorage.getItem("facas-brazao-cart") || "{}"),
+  favorites: JSON.parse(localStorage.getItem("facas-brazao-favorites") || "[]"),
   checkout: {
     cep: "",
     couponCode: "",
@@ -43,12 +47,16 @@ const state = {
     reviews: [],
     reports: null,
     cash: null,
+    logs: [],
   },
 };
 
 const productGrid = document.querySelector("#productGrid");
 const searchInput = document.querySelector("#searchInput");
 const sortSelect = document.querySelector("#sortSelect");
+const maxPriceInput = document.querySelector("#maxPriceInput");
+const readyOnlyInput = document.querySelector("#readyOnlyInput");
+const favoritesOnlyInput = document.querySelector("#favoritesOnlyInput");
 const cartDrawer = document.querySelector("#cartDrawer");
 const cartItems = document.querySelector("[data-cart-items]");
 const cartCount = document.querySelector("[data-cart-count]");
@@ -57,6 +65,7 @@ const checkoutModal = document.querySelector("#checkoutModal");
 const productModal = document.querySelector("#productModal");
 const authModal = document.querySelector("#authModal");
 const checkoutSummary = document.querySelector("[data-checkout-summary]");
+const checkoutCustomer = document.querySelector("[data-checkout-customer]");
 const productDetail = document.querySelector("[data-product-detail]");
 const checkoutStatus = document.querySelector("[data-checkout-status]");
 const clientPanel = document.querySelector("[data-auth-panel]");
@@ -90,6 +99,15 @@ const settingFallbacks = {
   whatsappProductMessage: "Olá, tenho interesse na faca {produto} da Facas Brazão. Pode me passar mais detalhes?",
   whatsappCheckoutMessage: "Olá, estou fechando um pedido no site da Facas Brazão e quero tirar uma dúvida antes de pagar.",
   whatsappSupportMessage: "Olá, vim pelo site da Facas Brazão e quero atendimento.",
+  primaryColor: "#123c2d",
+  accentColor: "#c9a227",
+  dangerColor: "#9f2a2a",
+  heroImage: "assets/hero-cutelaria.png",
+  buttonRadius: 8,
+  cardRadius: 8,
+  storeLayout: "premium",
+  announcementText: "Frete gratis em pedidos selecionados e atendimento pelo WhatsApp.",
+  customCss: "",
 };
 
 function escapeHtml(value = "") {
@@ -162,8 +180,61 @@ function syncAdminRoute() {
   document.body.classList.toggle("admin-route", window.location.hash === "#admin");
 }
 
+function openProductFromHash(hash = window.location.hash) {
+  if (!hash.startsWith("#produto=")) return false;
+  const key = decodeURIComponent(hash.split("=").slice(1).join("="));
+  const product = state.products.find((item) => item.id === key || item.slug === key);
+  if (!product) return false;
+  openProductDetail(product.id);
+  return true;
+}
+
+function handleHashRoute() {
+  syncAdminRoute();
+  if (openProductFromHash()) return;
+  if (["#loja", "#contato", "#admin"].includes(window.location.hash)) {
+    scrollToSection(window.location.hash, { updateHistory: false });
+  }
+}
+
+function scrollToSection(hash, options = {}) {
+  if (!hash || hash === "#") return false;
+  const { updateHistory = true } = options;
+  if (hash.startsWith("#produto=")) {
+    const opened = openProductFromHash(hash);
+    if (opened && updateHistory) {
+      window.history.pushState({}, "", hash);
+    }
+    return opened;
+  }
+  const section = document.querySelector(hash);
+  if (!section) return false;
+  const offset = 92;
+  const top = Math.max(0, section.getBoundingClientRect().top + window.scrollY - offset);
+  if (updateHistory) window.history.pushState({}, "", hash);
+  syncAdminRoute();
+  window.scrollTo({ top, behavior: "smooth" });
+  document.documentElement.scrollTop = top;
+  document.body.scrollTop = top;
+  return true;
+}
+
 function saveCart() {
   localStorage.setItem("facas-brazao-cart", JSON.stringify(state.cart));
+}
+
+function saveFavorites() {
+  localStorage.setItem("facas-brazao-favorites", JSON.stringify(state.favorites));
+}
+
+function toggleFavorite(id) {
+  if (state.favorites.includes(id)) {
+    state.favorites = state.favorites.filter((item) => item !== id);
+  } else {
+    state.favorites.push(id);
+  }
+  saveFavorites();
+  renderProducts();
 }
 
 async function api(path, options = {}) {
@@ -236,6 +307,7 @@ function renderSettings() {
   const seoTitle = state.settings.seoTitle || `${siteName} | Facas artesanais e cutelaria`;
   const seoDescription = state.settings.seoDescription || settingFallbacks.seoDescription;
   document.title = seoTitle;
+  applyVisualSettings();
   document.querySelectorAll('[data-meta="description"], [data-meta="og:description"], [data-meta="twitter:description"]').forEach((node) => {
     node.setAttribute("content", seoDescription);
   });
@@ -247,6 +319,69 @@ function renderSettings() {
     node.textContent = state.settings[key] || settingFallbacks[key] || "";
   });
   updateWhatsappLinks();
+  updateStructuredData();
+}
+
+function applyVisualSettings() {
+  const root = document.documentElement;
+  const visual = {
+    primaryColor: state.settings.primaryColor || settingFallbacks.primaryColor,
+    accentColor: state.settings.accentColor || settingFallbacks.accentColor,
+    dangerColor: state.settings.dangerColor || settingFallbacks.dangerColor,
+    heroImage: state.settings.heroImage || settingFallbacks.heroImage,
+    buttonRadius: Number(state.settings.buttonRadius ?? settingFallbacks.buttonRadius),
+    cardRadius: Number(state.settings.cardRadius ?? settingFallbacks.cardRadius),
+  };
+  root.style.setProperty("--green", visual.primaryColor);
+  root.style.setProperty("--gold", visual.accentColor);
+  root.style.setProperty("--red", visual.dangerColor);
+  root.style.setProperty("--button-radius", `${visual.buttonRadius}px`);
+  root.style.setProperty("--card-radius", `${visual.cardRadius}px`);
+  document.body.dataset.storeLayout = state.settings.storeLayout || settingFallbacks.storeLayout;
+  document.querySelector(".hero")?.style.setProperty("--hero-image", `url("${visual.heroImage}")`);
+  let customStyle = document.querySelector("#admin-custom-css");
+  if (!customStyle) {
+    customStyle = document.createElement("style");
+    customStyle.id = "admin-custom-css";
+    document.head.append(customStyle);
+  }
+  customStyle.textContent = state.settings.customCss || "";
+}
+
+function updateStructuredData() {
+  let script = document.querySelector("#product-structured-data");
+  if (!script) {
+    script = document.createElement("script");
+    script.type = "application/ld+json";
+    script.id = "product-structured-data";
+    document.head.append(script);
+  }
+  const baseUrl = state.settings.publicUrl || window.location.origin;
+  script.textContent = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    itemListElement: state.products.map((product, index) => ({
+      "@type": "ListItem",
+      position: index + 1,
+      item: {
+        "@type": "Product",
+        name: product.name,
+        image: (product.gallery?.length ? product.gallery : [product.image]).map((image) =>
+          /^https?:\/\//i.test(image) ? image : `${baseUrl}/${image}`.replace(/([^:]\/)\/+/g, "$1"),
+        ),
+        description: product.description,
+        sku: product.sku || product.id,
+        brand: { "@type": "Brand", name: state.settings.siteName || settingFallbacks.siteName },
+        offers: {
+          "@type": "Offer",
+          priceCurrency: "BRL",
+          price: Number(product.price || 0).toFixed(2),
+          availability: product.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+          url: `${baseUrl}/#produto=${encodeURIComponent(product.slug || product.id)}`,
+        },
+      },
+    })),
+  });
 }
 
 function renderStars(value = 0) {
@@ -262,13 +397,17 @@ function reviewLabel(product) {
 
 function filteredProducts() {
   const search = state.filters.search.trim().toLowerCase();
+  const maxPrice = Number(state.filters.maxPrice || 0);
   const list = state.products.filter((product) => {
     const inCategory = state.filters.category === "todos" || product.category === state.filters.category;
     const inSearch = [product.name, product.description, product.steel, product.category]
       .join(" ")
       .toLowerCase()
       .includes(search);
-    return product.active !== false && inCategory && inSearch;
+    const inPrice = !maxPrice || Number(product.price || 0) <= maxPrice;
+    const inStock = !state.filters.readyOnly || Number(product.stock || 0) > 0;
+    const inFavorites = !state.filters.favoritesOnly || state.favorites.includes(product.id);
+    return product.active !== false && inCategory && inSearch && inPrice && inStock && inFavorites;
   });
 
   return list.sort((a, b) => {
@@ -293,11 +432,15 @@ function renderProducts() {
       const soldOut = product.stock <= 0;
       const maxed = quantityInCart >= product.stock;
       const featuredReview = product.reviewStats?.reviews?.[0];
+      const favorite = state.favorites.includes(product.id);
       return `
         <article class="product-card">
           <div class="product-media">
             <img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy" />
             <span class="product-badge">${escapeHtml(product.badge || product.category)}</span>
+            <button class="favorite-button ${favorite ? "is-active" : ""}" type="button" data-favorite-product="${product.id}" aria-label="${favorite ? "Remover dos favoritos" : "Favoritar produto"}">
+              ${favorite ? "♥" : "♡"}
+            </button>
           </div>
           <div class="product-body">
             <div class="product-title-row">
@@ -317,6 +460,7 @@ function renderProducts() {
               <span class="stock ${product.stock <= 3 ? "low" : ""}">${product.stock} em estoque</span>
               <div class="inline-actions">
                 <button class="mini-button" type="button" data-view-product="${product.id}">Detalhes</button>
+                <a class="mini-button" href="#produto=${encodeURIComponent(product.slug || product.id)}">Link</a>
                 <button class="button button-primary" type="button" data-add-product="${product.id}" ${soldOut || maxed ? "disabled" : ""}>
                   ${soldOut ? "Esgotado" : maxed ? "No carrinho" : "Adicionar"}
                 </button>
@@ -483,6 +627,37 @@ function renderPaymentOptions() {
   select.value = state.payment.mercadoPagoConfigured ? "Mercado Pago" : "PIX manual";
 }
 
+function renderCheckoutCustomer() {
+  if (!checkoutCustomer) return;
+  if (state.user) {
+    checkoutCustomer.innerHTML = `
+      <div class="checkout-account-note">
+        <strong>Comprando como ${escapeHtml(state.user.name)}</strong>
+        <span>${escapeHtml(state.user.email)} ${state.user.phone ? `· ${escapeHtml(state.user.phone)}` : ""}</span>
+      </div>
+    `;
+    return;
+  }
+  checkoutCustomer.innerHTML = `
+    <div class="checkout-account-note">
+      <strong>Compra rápida</strong>
+      <span>Você pode finalizar sem cadastro. Depois, se quiser, cria uma conta para acompanhar os pedidos.</span>
+    </div>
+    <label>
+      <span>Nome completo</span>
+      <input name="customerName" type="text" autocomplete="name" required />
+    </label>
+    <label>
+      <span>E-mail</span>
+      <input name="customerEmail" type="email" autocomplete="email" required />
+    </label>
+    <label>
+      <span>WhatsApp</span>
+      <input name="customerPhone" type="tel" autocomplete="tel" required />
+    </label>
+  `;
+}
+
 async function refreshCheckoutPricing() {
   const subtotal = cartSubtotal();
   if (state.checkout.cep) {
@@ -566,14 +741,9 @@ function openCheckout() {
     showToast("Adicione um produto antes de finalizar.");
     return;
   }
-  if (!state.user) {
-    showToast("Faça login ou cadastre-se para finalizar.");
-    closeCart();
-    openAuthModal("login");
-    return;
-  }
 
   renderPaymentOptions();
+  renderCheckoutCustomer();
   renderCheckoutSummary();
   checkoutStatus.textContent = "";
   checkoutStatus.classList.remove("error");
@@ -593,10 +763,22 @@ function openProductDetail(id) {
   if (!product || !productDetail || !productModal) return;
   state.selectedProductId = id;
   const soldOut = product.stock <= 0;
+  const gallery = product.gallery?.length ? product.gallery : [product.image];
   productDetail.innerHTML = `
     <div class="product-detail-layout">
       <div class="product-detail-media">
-        <img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}" />
+        <img src="${escapeHtml(gallery[0])}" alt="${escapeHtml(product.name)}" data-product-main-image />
+        <div class="gallery-strip">
+          ${gallery
+            .map(
+              (image) => `
+                <button type="button" data-gallery-image="${escapeHtml(image)}" aria-label="Ver foto de ${escapeHtml(product.name)}">
+                  <img src="${escapeHtml(image)}" alt="" loading="lazy" />
+                </button>
+              `,
+            )
+            .join("")}
+        </div>
       </div>
       <div class="product-detail-copy">
         <p class="eyebrow">${escapeHtml(product.badge || product.category)}</p>
@@ -610,6 +792,7 @@ function openProductDetail(id) {
           <li>${escapeHtml(product.size || "Sob consulta")}</li>
           <li>${escapeHtml(product.handleMaterial || "Cabo selecionado")}</li>
           <li>${escapeHtml(product.weight || "Peso sob consulta")}</li>
+          <li>SKU ${escapeHtml(product.sku || product.id)}</li>
           <li>${product.stock} em estoque</li>
         </ul>
         <div class="product-spec-grid">
@@ -626,6 +809,9 @@ function openProductDetail(id) {
         <div class="action-row">
           <button class="button button-primary" type="button" data-add-product="${product.id}" ${soldOut ? "disabled" : ""}>
             ${soldOut ? "Esgotado" : "Adicionar ao carrinho"}
+          </button>
+          <button class="button button-secondary" type="button" data-favorite-product="${product.id}">
+            ${state.favorites.includes(product.id) ? "Remover favorito" : "Favoritar"}
           </button>
           <a class="button button-whatsapp whatsapp-icon-link" href="${whatsappUrl(settingMessage("whatsappProductMessage", settingFallbacks.whatsappProductMessage, { produto: product.name }))}" rel="noopener" aria-label="Perguntar sobre ${escapeHtml(product.name)} no WhatsApp">
             <span class="whatsapp-mark" aria-hidden="true"></span>
@@ -802,12 +988,33 @@ function renderOrdersList(orders) {
               </header>
               <p>${order.items.map((item) => `${item.quantity}x ${escapeHtml(item.name)}`).join(" · ")}</p>
               <strong>${money.format(order.total)}</strong>
+              ${renderOrderTimeline(order)}
               ${renderReviewFormsForOrder(order)}
             </article>
           `,
         )
         .join("")}
     </div>
+  `;
+}
+
+function renderOrderTimeline(order) {
+  const timeline = order.timeline || [];
+  if (!timeline.length) return "";
+  return `
+    <ol class="order-timeline">
+      ${timeline
+        .map(
+          (event) => `
+            <li>
+              <strong>${escapeHtml(event.status)}</strong>
+              <span>${event.at ? dateTime.format(new Date(event.at)) : ""}</span>
+              ${event.note ? `<p>${escapeHtml(event.note)}</p>` : ""}
+            </li>
+          `,
+        )
+        .join("")}
+    </ol>
   `;
 }
 
@@ -896,6 +1103,8 @@ function renderAdminShell() {
     ["customers", "Clientes"],
     ["reports", "Relatórios"],
     ["cash", "Caixa"],
+    ["editor", "Editor visual"],
+    ["logs", "Logs"],
     ["settings", "Configurações"],
   ];
 
@@ -929,6 +1138,8 @@ function renderAdminTab() {
   if (state.adminTab === "customers") return renderAdminCustomers();
   if (state.adminTab === "reports") return renderAdminReports();
   if (state.adminTab === "cash") return renderAdminCash();
+  if (state.adminTab === "editor") return renderAdminEditor();
+  if (state.adminTab === "logs") return renderAdminLogs();
   if (state.adminTab === "settings") return renderAdminSettings();
   return renderAdminDashboard();
 }
@@ -942,8 +1153,24 @@ function renderAdminDashboard() {
         <strong>${money.format(summary.revenue)}</strong>
       </article>
       <article class="metric-card">
+        <span>Lucro estimado</span>
+        <strong>${money.format(summary.profit || 0)}</strong>
+      </article>
+      <article class="metric-card">
+        <span>Hoje</span>
+        <strong>${money.format(summary.todayRevenue || 0)}</strong>
+      </article>
+      <article class="metric-card">
+        <span>Saldo caixa</span>
+        <strong>${money.format(summary.cashBalance || 0)}</strong>
+      </article>
+      <article class="metric-card">
         <span>Pedidos</span>
         <strong>${summary.orders}</strong>
+      </article>
+      <article class="metric-card">
+        <span>Pendentes</span>
+        <strong>${summary.pendingOrders || 0}</strong>
       </article>
       <article class="metric-card">
         <span>Clientes</span>
@@ -972,6 +1199,8 @@ function renderAdminDashboard() {
         <button class="mini-button" type="button" data-admin-tab="customers">Clientes e relatórios</button>
         <button class="mini-button" type="button" data-admin-tab="reports">Relatórios completos</button>
         <button class="mini-button" type="button" data-admin-tab="cash">Caixa</button>
+        <button class="mini-button" type="button" data-admin-tab="editor">Editor visual</button>
+        <button class="mini-button" type="button" data-admin-tab="logs">Logs</button>
         <button class="mini-button" type="button" data-admin-tab="coupons">Cupons</button>
         <button class="mini-button" type="button" data-admin-tab="reviews">Avaliações</button>
         <button class="mini-button" type="button" data-admin-tab="settings">Textos, WhatsApp e pagamento</button>
@@ -1054,8 +1283,10 @@ function renderAdminProducts() {
         <thead>
           <tr>
             <th>Produto</th>
+            <th>SKU</th>
             <th>Categoria</th>
             <th>Preço</th>
+            <th>Custo</th>
             <th>Estoque</th>
             <th>Status</th>
             <th>Ações</th>
@@ -1075,8 +1306,10 @@ function renderAdminProducts() {
                       </div>
                     </div>
                   </td>
+                  <td>${escapeHtml(product.sku || "")}</td>
                   <td>${escapeHtml(product.category)}</td>
                   <td>${money.format(product.price)}</td>
+                  <td>${money.format(product.cost || 0)}<br /><span class="muted">Margem ${product.price ? (((product.price - Number(product.cost || 0)) / product.price) * 100).toFixed(1) : "0.0"}%</span></td>
                   <td>${product.stock}</td>
                   <td><span class="status-pill ${product.active ? "good" : "danger"}">${product.active ? "Ativo" : "Inativo"}</span></td>
                   <td>
@@ -1102,6 +1335,10 @@ function productFormFields(product = {}) {
       <input name="name" type="text" value="${escapeHtml(product.name || "")}" required />
     </label>
     <label>
+      <span>SKU</span>
+      <input name="sku" type="text" value="${escapeHtml(product.sku || "")}" placeholder="CHEF-8-1070" />
+    </label>
+    <label>
       <span>Categoria</span>
       <select name="category" required>
         ${["cozinha", "churrasco", "campo", "kits"]
@@ -1114,8 +1351,16 @@ function productFormFields(product = {}) {
       <input name="price" type="number" min="0" step="0.01" value="${product.price ?? ""}" required />
     </label>
     <label>
+      <span>Custo</span>
+      <input name="cost" type="number" min="0" step="0.01" value="${product.cost ?? 0}" />
+    </label>
+    <label>
       <span>Estoque</span>
       <input name="stock" type="number" min="0" step="1" value="${product.stock ?? 0}" required />
+    </label>
+    <label>
+      <span>Estoque mínimo</span>
+      <input name="minStock" type="number" min="0" step="1" value="${product.minStock ?? 3}" />
     </label>
     <label>
       <span>Selo</span>
@@ -1124,6 +1369,10 @@ function productFormFields(product = {}) {
     <label>
       <span>Imagem</span>
       <input name="image" type="text" value="${escapeHtml(product.image || "assets/prod-chef.png")}" />
+    </label>
+    <label class="wide-field">
+      <span>Galeria de fotos</span>
+      <textarea name="gallery" rows="3" placeholder="Uma URL por linha">${escapeHtml((product.gallery || []).join("\n"))}</textarea>
     </label>
     <label>
       <span>Enviar foto real</span>
@@ -1384,6 +1633,7 @@ function renderAdminOrders() {
                   <td>
                     ${order.cep ? `<strong>CEP ${escapeHtml(order.cep)}</strong><br />` : ""}
                     ${escapeHtml(order.address)}${order.notes ? `<br /><span class="muted">${escapeHtml(order.notes)}</span>` : ""}
+                    ${renderOrderTimeline(order)}
                     ${String(order.customerPhone || "").replace(/\D/g, "").length >= 10 ? `<br /><a class="mini-button" href="${whatsappOrderLink(order)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
                   </td>
                 </tr>
@@ -1451,6 +1701,8 @@ function renderAdminReports() {
   return `
     <div class="admin-grid">
       <article class="metric-card"><span>Faturamento pago</span><strong>${money.format(reports.overview.revenue)}</strong></article>
+      <article class="metric-card"><span>Lucro estimado</span><strong>${money.format(reports.overview.profit || 0)}</strong></article>
+      <article class="metric-card"><span>Margem</span><strong>${Number(reports.overview.margin || 0).toFixed(1)}%</strong></article>
       <article class="metric-card"><span>Pedidos pagos</span><strong>${reports.overview.paidOrders}</strong></article>
       <article class="metric-card"><span>Ticket médio</span><strong>${money.format(reports.overview.averageTicket)}</strong></article>
       <article class="metric-card"><span>Itens vendidos</span><strong>${reports.overview.itemsSold}</strong></article>
@@ -1469,6 +1721,7 @@ function renderAdminReports() {
         <a class="mini-button" href="/api/admin/reports.csv?type=customers" download>Clientes CSV</a>
         <a class="mini-button" href="/api/admin/reports.csv?type=stock" download>Estoque CSV</a>
         <a class="mini-button" href="/api/admin/reports.csv?type=days" download>Vendas por dia CSV</a>
+        <a class="mini-button" href="/api/admin/reports.csv?type=profit" download>Lucro CSV</a>
         <a class="mini-button" href="/api/admin/reports.csv?type=cash" download>Caixa CSV</a>
       </div>
     </div>
@@ -1483,11 +1736,11 @@ function renderAdminReports() {
       </div>
       <div class="panel">
         <h3>Produtos mais vendidos</h3>
-        ${renderSimpleReport(reports.products.slice(0, 10), ["name", "quantity", "revenue"], ["Produto", "Qtd.", "Total"], { revenue: "money" })}
+        ${renderSimpleReport(reports.products.slice(0, 10), ["name", "quantity", "revenue", "profit"], ["Produto", "Qtd.", "Total", "Lucro"], { revenue: "money", profit: "money" })}
       </div>
       <div class="panel">
         <h3>Estoque</h3>
-        ${renderSimpleReport(reports.stock.slice(0, 10), ["name", "stock", "estimatedValue"], ["Produto", "Estoque", "Valor"], { estimatedValue: "money" })}
+        ${renderSimpleReport(reports.stock.slice(0, 10), ["name", "stock", "minStock", "estimatedValue", "estimatedCost"], ["Produto", "Estoque", "Mín.", "Valor", "Custo"], { estimatedValue: "money", estimatedCost: "money" })}
       </div>
     </div>
   `;
@@ -1568,6 +1821,30 @@ function renderAdminCash() {
         <p class="form-status wide-field" role="status"></p>
       </form>
     </div>
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>Fechamento de caixa</h3>
+          <p>Registre o saldo contado no fim do dia e acompanhe diferenças.</p>
+        </div>
+      </div>
+      <form class="form-grid" data-cash-close-form>
+        <label>
+          <span>Período</span>
+          <input name="period" type="date" value="${new Date().toISOString().slice(0, 10)}" required />
+        </label>
+        <label>
+          <span>Saldo contado</span>
+          <input name="countedBalance" type="number" step="0.01" value="${Number(cash.summary.balance || 0).toFixed(2)}" required />
+        </label>
+        <label class="wide-field">
+          <span>Observações</span>
+          <textarea name="notes" rows="2" placeholder="Ex.: diferença por taxa, troco ou ajuste"></textarea>
+        </label>
+        <button class="button button-secondary wide-field" type="submit">Fechar caixa</button>
+        <p class="form-status wide-field" role="status"></p>
+      </form>
+    </div>
     <div class="table-card">
       <table>
         <thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Forma</th><th>Valor</th></tr></thead>
@@ -1585,6 +1862,129 @@ function renderAdminCash() {
               `,
             )
             .join("") || `<tr><td colspan="5">Nenhum lançamento manual.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <div class="table-card">
+      <table>
+        <thead><tr><th>Período</th><th>Fechado em</th><th>Esperado</th><th>Contado</th><th>Diferença</th><th>Obs.</th></tr></thead>
+        <tbody>
+          ${(cash.closings || [])
+            .map(
+              (closing) => `
+                <tr>
+                  <td>${escapeHtml(closing.period)}</td>
+                  <td>${dateTime.format(new Date(closing.closedAt))}</td>
+                  <td>${money.format(closing.expectedBalance)}</td>
+                  <td>${money.format(closing.countedBalance)}</td>
+                  <td><span class="status-pill ${Number(closing.difference || 0) === 0 ? "good" : "warn"}">${money.format(closing.difference)}</span></td>
+                  <td>${escapeHtml(closing.notes || "")}</td>
+                </tr>
+              `,
+            )
+            .join("") || `<tr><td colspan="6">Nenhum fechamento registrado.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderAdminEditor() {
+  const settings = state.settings;
+  return `
+    <div class="panel editor-panel">
+      <div class="panel-head">
+        <div>
+          <h3>Editor visual do site</h3>
+          <p>Altere cores, imagem principal, arredondamento, aviso e CSS extra sem mexer no código.</p>
+        </div>
+        <a class="button button-secondary" href="/api/admin/backup" download>Baixar backup</a>
+      </div>
+      <form class="form-grid" data-editor-form>
+        <label>
+          <span>Cor principal</span>
+          <input name="primaryColor" type="color" value="${escapeHtml(settings.primaryColor || settingFallbacks.primaryColor)}" />
+        </label>
+        <label>
+          <span>Cor de destaque</span>
+          <input name="accentColor" type="color" value="${escapeHtml(settings.accentColor || settingFallbacks.accentColor)}" />
+        </label>
+        <label>
+          <span>Cor de alerta</span>
+          <input name="dangerColor" type="color" value="${escapeHtml(settings.dangerColor || settingFallbacks.dangerColor)}" />
+        </label>
+        <label>
+          <span>Layout da vitrine</span>
+          <select name="storeLayout">
+            <option value="premium" ${settings.storeLayout !== "compact" ? "selected" : ""}>Premium</option>
+            <option value="compact" ${settings.storeLayout === "compact" ? "selected" : ""}>Compacto</option>
+          </select>
+        </label>
+        <label>
+          <span>Raio dos botões</span>
+          <input name="buttonRadius" type="number" min="0" max="28" value="${Number(settings.buttonRadius ?? settingFallbacks.buttonRadius)}" />
+        </label>
+        <label>
+          <span>Raio dos cards</span>
+          <input name="cardRadius" type="number" min="0" max="28" value="${Number(settings.cardRadius ?? settingFallbacks.cardRadius)}" />
+        </label>
+        <label class="wide-field">
+          <span>Imagem principal</span>
+          <input name="heroImage" type="text" value="${escapeHtml(settings.heroImage || settingFallbacks.heroImage)}" />
+        </label>
+        <label class="wide-field">
+          <span>Aviso comercial</span>
+          <input name="announcementText" type="text" value="${escapeHtml(settings.announcementText || settingFallbacks.announcementText)}" />
+        </label>
+        <label class="wide-field">
+          <span>CSS extra</span>
+          <textarea name="customCss" rows="8" placeholder=".product-card { ... }">${escapeHtml(settings.customCss || "")}</textarea>
+        </label>
+        <button class="button button-primary wide-field" type="submit">Salvar visual</button>
+        <p class="form-status wide-field" role="status"></p>
+      </form>
+    </div>
+    <div class="editor-preview">
+      <article class="product-card">
+        <div class="product-media"><img src="${escapeHtml(settings.heroImage || settingFallbacks.heroImage)}" alt="Prévia visual" /></div>
+        <div class="product-body">
+          <div class="product-title-row"><h3>Prévia da faca</h3><span class="product-price">R$ 389,00</span></div>
+          <p>Este card mostra como cores, botões e arredondamento ficam na loja.</p>
+          <button class="button button-primary" type="button">Comprar</button>
+        </div>
+      </article>
+    </div>
+  `;
+}
+
+function renderAdminLogs() {
+  const logs = state.admin.logs || [];
+  return `
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>Logs de ações</h3>
+          <p>Histórico das alterações feitas no painel administrativo.</p>
+        </div>
+        <a class="button button-secondary" href="/api/admin/backup" download>Backup JSON</a>
+      </div>
+    </div>
+    <div class="table-card">
+      <table>
+        <thead><tr><th>Data</th><th>Usuário</th><th>Ação</th><th>Detalhe</th></tr></thead>
+        <tbody>
+          ${logs
+            .map(
+              (log) => `
+                <tr>
+                  <td>${dateTime.format(new Date(log.createdAt))}</td>
+                  <td>${escapeHtml(log.userName || "")}</td>
+                  <td><strong>${escapeHtml(log.action)}</strong></td>
+                  <td>${escapeHtml(log.detail || "")}</td>
+                </tr>
+              `,
+            )
+            .join("") || `<tr><td colspan="4">Nenhum log registrado ainda.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1759,7 +2159,7 @@ async function loadMyOrders() {
 
 async function loadAdminData() {
   if (!state.user || state.user.role !== "admin") return;
-  const [summary, products, orders, customers, coupons, reviews, reports, cash] = await Promise.all([
+  const [summary, products, orders, customers, coupons, reviews, reports, cash, logs] = await Promise.all([
     api("/api/admin/summary"),
     api("/api/admin/products"),
     api("/api/admin/orders"),
@@ -1768,6 +2168,7 @@ async function loadAdminData() {
     api("/api/admin/reviews"),
     api("/api/admin/reports"),
     api("/api/admin/cash"),
+    api("/api/admin/logs"),
   ]);
   state.admin.summary = summary.summary;
   state.admin.products = products.products;
@@ -1777,6 +2178,7 @@ async function loadAdminData() {
   state.admin.reviews = reviews.reviews;
   state.admin.reports = reports.reports;
   state.admin.cash = cash.cash;
+  state.admin.logs = logs.logs;
 }
 
 async function loadBootstrap() {
@@ -1793,6 +2195,7 @@ async function loadBootstrap() {
   if (state.user?.role === "admin") await loadAdminData();
   renderClientPanel();
   renderAdminShell();
+  window.setTimeout(handleHashRoute, 0);
 }
 
 async function handlePaymentReturn() {
@@ -1878,6 +2281,9 @@ async function submitOrder(form) {
     method: "POST",
     body: {
       items: cartLines().map((item) => ({ productId: item.id, quantity: item.quantity })),
+      customerName: data.get("customerName"),
+      customerEmail: data.get("customerEmail"),
+      customerPhone: data.get("customerPhone"),
       cep: data.get("cep"),
       address: data.get("address"),
       couponCode: data.get("couponCode"),
@@ -1920,11 +2326,15 @@ function productPayloadFromForm(form) {
   const data = new FormData(form);
   return {
     name: data.get("name"),
+    sku: data.get("sku"),
     category: data.get("category"),
     price: data.get("price"),
+    cost: data.get("cost"),
     stock: data.get("stock"),
+    minStock: data.get("minStock"),
     badge: data.get("badge"),
     image: data.get("image"),
+    gallery: data.get("gallery"),
     steel: data.get("steel"),
     size: data.get("size"),
     handleMaterial: data.get("handleMaterial"),
@@ -2039,6 +2449,35 @@ async function updateOrderStatus(id, status) {
   await loadBootstrap();
 }
 
+function settingsPayloadFromState(overrides = {}) {
+  return {
+    ...state.settings,
+    ...overrides,
+  };
+}
+
+async function saveEditorSettings(form) {
+  const data = new FormData(form);
+  await api("/api/admin/settings", {
+    method: "PUT",
+    body: settingsPayloadFromState({
+      primaryColor: data.get("primaryColor"),
+      accentColor: data.get("accentColor"),
+      dangerColor: data.get("dangerColor"),
+      heroImage: data.get("heroImage"),
+      buttonRadius: data.get("buttonRadius"),
+      cardRadius: data.get("cardRadius"),
+      storeLayout: data.get("storeLayout"),
+      announcementText: data.get("announcementText"),
+      customCss: data.get("customCss"),
+    }),
+  });
+  showToast("Visual do site atualizado.");
+  await loadBootstrap();
+  state.adminTab = "editor";
+  renderAdminShell();
+}
+
 async function saveSettings(form) {
   const data = new FormData(form);
   await api("/api/admin/settings", {
@@ -2112,6 +2551,23 @@ async function saveCashEntry(form) {
   renderAdminShell();
 }
 
+async function saveCashClosing(form) {
+  const data = new FormData(form);
+  await api("/api/admin/cash/close", {
+    method: "POST",
+    body: {
+      period: data.get("period"),
+      countedBalance: data.get("countedBalance"),
+      notes: data.get("notes"),
+    },
+  });
+  form.reset();
+  showToast("Caixa fechado.");
+  await loadBootstrap();
+  state.adminTab = "cash";
+  renderAdminShell();
+}
+
 document.addEventListener("click", async (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
@@ -2121,6 +2577,21 @@ document.addEventListener("click", async (event) => {
     event.preventDefault();
     window.location.assign(whatsappAnchor.href);
     return;
+  }
+
+  const scrollControl = target.closest("[data-scroll-target]");
+  if (scrollControl) {
+    event.preventDefault();
+    if (scrollToSection(scrollControl.dataset.scrollTarget)) return;
+  }
+
+  const internalAnchor = target.closest('a[href^="#"]');
+  if (internalAnchor) {
+    const hash = internalAnchor.getAttribute("href");
+    if (scrollToSection(hash)) {
+      event.preventDefault();
+      return;
+    }
   }
 
   if (target.closest("[data-theme-toggle]")) {
@@ -2153,9 +2624,24 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  const favoriteButton = target.closest("[data-favorite-product]");
+  if (favoriteButton) {
+    toggleFavorite(favoriteButton.dataset.favoriteProduct);
+    return;
+  }
+
+  const galleryButton = target.closest("[data-gallery-image]");
+  if (galleryButton) {
+    const mainImage = document.querySelector("[data-product-main-image]");
+    if (mainImage) mainImage.src = galleryButton.dataset.galleryImage;
+    return;
+  }
+
   const viewProductButton = target.closest("[data-view-product]");
   if (viewProductButton) {
+    const product = productById(viewProductButton.dataset.viewProduct);
     openProductDetail(viewProductButton.dataset.viewProduct);
+    if (product) window.history.pushState({}, "", `#produto=${encodeURIComponent(product.slug || product.id)}`);
     return;
   }
 
@@ -2264,8 +2750,10 @@ document.addEventListener("submit", async (event) => {
     if (form.matches("[data-coupon-form]")) await saveCoupon(form);
     if (form.matches("[data-review-form]")) await saveReview(form);
     if (form.matches("[data-settings-form]")) await saveSettings(form);
+    if (form.matches("[data-editor-form]")) await saveEditorSettings(form);
     if (form.matches("[data-password-form]")) await saveAdminPassword(form);
     if (form.matches("[data-cash-form]")) await saveCashEntry(form);
+    if (form.matches("[data-cash-close-form]")) await saveCashClosing(form);
   } catch (error) {
     setFormStatus(form, error.message, true);
     showToast(error.message);
@@ -2337,6 +2825,21 @@ sortSelect.addEventListener("change", (event) => {
   renderProducts();
 });
 
+maxPriceInput?.addEventListener("input", (event) => {
+  state.filters.maxPrice = event.target.value;
+  renderProducts();
+});
+
+readyOnlyInput?.addEventListener("change", (event) => {
+  state.filters.readyOnly = event.target.checked;
+  renderProducts();
+});
+
+favoritesOnlyInput?.addEventListener("change", (event) => {
+  state.filters.favoritesOnly = event.target.checked;
+  renderProducts();
+});
+
 cartDrawer.addEventListener("click", (event) => {
   if (event.target === cartDrawer) closeCart();
 });
@@ -2353,7 +2856,7 @@ authModal?.addEventListener("click", (event) => {
   if (event.target === authModal) closeAuthModal();
 });
 
-window.addEventListener("hashchange", syncAdminRoute);
+window.addEventListener("hashchange", handleHashRoute);
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
@@ -2365,7 +2868,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 applyTheme();
-syncAdminRoute();
+handleHashRoute();
 
 loadBootstrap()
   .then(handlePaymentReturn)

@@ -18,6 +18,9 @@
   --gold: #d39a35;
   --red: #a83d35;
   --blue: #365d7c;
+  --button-radius: 8px;
+  --card-radius: 8px;
+  --hero-image: url("assets/hero-cutelaria.png");
   --shadow: 0 18px 50px rgba(28, 36, 38, 0.12);
   color-scheme: light;
   font-family:
@@ -151,7 +154,17 @@ img {
   font-weight: 800;
 }
 
-.main-nav a:hover {
+.main-nav button {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: inherit;
+}
+
+.main-nav a:hover,
+.main-nav button:hover {
   color: var(--green);
 }
 
@@ -175,7 +188,7 @@ img {
   justify-content: center;
   min-height: 44px;
   padding: 0 14px;
-  border-radius: 8px;
+  border-radius: var(--button-radius);
   font-weight: 900;
 }
 
@@ -259,7 +272,7 @@ body[data-theme="dark"] .theme-toggle-icon::after {
   overflow: hidden;
   background:
     linear-gradient(90deg, rgba(13, 20, 20, 0.88) 0%, rgba(13, 20, 20, 0.62) 45%, rgba(13, 20, 20, 0.08) 100%),
-    url("assets/hero-cutelaria.png") center / cover no-repeat;
+    var(--hero-image) center / cover no-repeat;
 }
 
 .hero-content {
@@ -315,7 +328,7 @@ body[data-theme="dark"] .theme-toggle-icon::after {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--button-radius);
   font-weight: 900;
   transition:
     transform 180ms ease,
@@ -532,7 +545,7 @@ textarea:focus {
 .table-card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--card-radius);
   box-shadow: 0 12px 32px rgba(28, 36, 38, 0.07);
 }
 
@@ -1168,6 +1181,117 @@ td {
   color: var(--ink);
 }
 
+.announcement-bar {
+  margin: 0 auto;
+  padding: 12px clamp(20px, 6vw, 84px);
+  color: var(--on-accent);
+  background: var(--gold);
+  font-weight: 900;
+  text-align: center;
+}
+
+.compact-check {
+  min-height: 44px;
+  align-self: end;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  background: var(--surface);
+}
+
+.favorite-button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(20, 32, 27, 0.58);
+  font-size: 1.3rem;
+}
+
+.favorite-button.is-active {
+  color: var(--gold);
+  background: rgba(20, 32, 27, 0.78);
+}
+
+.gallery-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.gallery-strip button {
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.gallery-strip img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+
+.checkout-customer {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.checkout-account-note {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--card-radius);
+  background: var(--soft);
+}
+
+.order-timeline {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.order-timeline li {
+  padding-left: 12px;
+  border-left: 3px solid var(--gold);
+}
+
+.order-timeline span,
+.order-timeline p {
+  display: block;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.editor-preview {
+  display: grid;
+  grid-template-columns: minmax(260px, 420px);
+}
+
+body[data-store-layout="compact"] .product-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+body[data-store-layout="compact"] .product-card p,
+body[data-store-layout="compact"] .mini-review {
+  display: none;
+}
+
 .auth-modal {
   position: relative;
   isolation: isolate;
@@ -1548,6 +1672,10 @@ td {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  body[data-store-layout="compact"] .product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .admin-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1653,8 +1781,13 @@ td {
   .admin-login-layout,
   .form-grid,
   .checkout-form,
+  .checkout-customer,
   .product-detail-layout,
   .admin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  body[data-store-layout="compact"] .product-grid {
     grid-template-columns: 1fr;
   }
 

@@ -91,10 +91,25 @@ function defaultCoupons() {
   ];
 }
 
+function defaultVisualSettings() {
+  return {
+    primaryColor: "#123c2d",
+    accentColor: "#c9a227",
+    dangerColor: "#9f2a2a",
+    heroImage: "assets/hero-cutelaria.png",
+    buttonRadius: 8,
+    cardRadius: 8,
+    storeLayout: "premium",
+    announcementText: "Frete gratis em pedidos selecionados e atendimento pelo WhatsApp.",
+    customCss: "",
+  };
+}
+
 async function seedData() {
   const adminHash = await hashPassword("admin123");
   return {
     settings: {
+      ...defaultVisualSettings(),
       siteName: "Facas Brazão",
       heroEyebrow: "Cutelaria artesanal brasileira",
       tagline:
@@ -298,6 +313,8 @@ async function seedData() {
     ],
     orders: [],
     cashEntries: [],
+    cashClosings: [],
+    activityLogs: [],
   };
 }
 
@@ -306,6 +323,9 @@ async function readStore() {
     const raw = await fs.readFile(dataFile, "utf-8");
     const store = JSON.parse(raw);
     store.settings ||= {};
+    Object.entries(defaultVisualSettings()).forEach(([key, value]) => {
+      store.settings[key] ??= value;
+    });
     store.settings.siteName ||= "Facas Brazão";
     store.settings.heroEyebrow ||= "Cutelaria artesanal brasileira";
     store.settings.tagline ||= "Facas para churrasco, cozinha e campo com acabamento premium, fio afiado e compra segura.";
@@ -356,7 +376,19 @@ async function readStore() {
     store.reviews ||= [];
     store.users ||= [];
     store.orders ||= [];
+    store.orders.forEach((order) => {
+      order.timeline ||= [
+        {
+          status: order.status || "Recebido",
+          note: "Pedido registrado.",
+          at: order.createdAt || new Date().toISOString(),
+          by: order.customerId || "",
+        },
+      ];
+    });
     store.cashEntries ||= [];
+    store.cashClosings ||= [];
+    store.activityLogs ||= [];
     return store;
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
@@ -374,7 +406,34 @@ async function writeStore(store) {
   await fs.rename(tmp, dataFile);
 }
 
+function slugify(value = "") {
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function normalizeGallery(product = {}) {
+  const gallery = Array.isArray(product.gallery)
+    ? product.gallery
+    : String(product.gallery || "")
+        .split(/\r?\n|,/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+  const image = String(product.image || "").trim();
+  return [...new Set([image, ...gallery].filter(Boolean))];
+}
+
 function applyProductDefaults(product = {}) {
+  product.slug ||= slugify(product.name || product.id);
+  product.sku ||= String(product.id || product.slug || "").toUpperCase().replace(/[^A-Z0-9_-]/g, "_");
+  product.cost = Number(product.cost || 0);
+  product.minStock = Number.parseInt(product.minStock, 10);
+  if (!Number.isInteger(product.minStock) || product.minStock < 0) product.minStock = 3;
+  product.gallery = normalizeGallery(product);
   product.handleMaterial ||= product.category === "campo" ? "Micarta ou madeira estabilizada" : "Madeira selecionada";
   product.weight ||= "Sob consulta";
   product.bladeLength ||= product.size || "Sob consulta";
@@ -637,6 +696,12 @@ function summarizeStore(store) {
   const orders = store.orders;
   const paidOrders = orders.filter(isPaidOrder);
   const revenue = paidOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+  const profit = paidOrders.reduce((sum, order) => sum + orderProfit(order), 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const todayOrders = orders.filter((order) => String(order.createdAt || "").startsWith(today));
+  const pendingOrders = orders.filter((order) =>
+    ["Recebido", "Aguardando pagamento", "Pago", "Em produção", "Pronto para envio"].includes(order.status),
+  );
   const soldItems = paidOrders.flatMap((order) => order.items);
   const topProducts = Object.values(
     soldItems.reduce((acc, item) => {
@@ -648,11 +713,18 @@ function summarizeStore(store) {
   )
     .sort((a, b) => b.quantity - a.quantity)
     .slice(0, 5);
-  const lowStock = store.products.filter((product) => product.active && product.stock <= 3);
+  const lowStock = store.products.filter((product) => product.active && product.stock <= Number(product.minStock || 3));
   const pendingReviews = store.reviews.filter((review) => review.status === "pending").length;
+  const cash = summarizeCash(store);
 
   return {
     revenue,
+    profit,
+    margin: revenue ? (profit / revenue) * 100 : 0,
+    todayRevenue: todayOrders.filter(isPaidOrder).reduce((sum, order) => sum + Number(order.total || 0), 0),
+    todayOrders: todayOrders.length,
+    pendingOrders: pendingOrders.length,
+    cashBalance: cash.summary.balance,
     orders: orders.length,
     customers: store.users.filter((user) => user.role === "customer").length,
     products: store.products.length,
@@ -664,6 +736,14 @@ function summarizeStore(store) {
 
 function isPaidOrder(order) {
   return ["Pago", "Em produção", "Pronto para envio", "Enviado", "Entregue"].includes(order.status);
+}
+
+function orderCost(order) {
+  return (order.items || []).reduce((sum, item) => sum + Number(item.cost || 0) * Number(item.quantity || 0), 0);
+}
+
+function orderProfit(order) {
+  return Number(order.total || 0) - Number(order.shipping || 0) - orderCost(order);
 }
 
 function groupByDay(orders) {
@@ -684,6 +764,8 @@ function summarizeReports(store) {
   const paidOrders = orders.filter(isPaidOrder);
   const paidItems = paidOrders.flatMap((order) => order.items || []);
   const revenue = paidOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+  const cost = paidOrders.reduce((sum, order) => sum + orderCost(order), 0);
+  const profit = paidOrders.reduce((sum, order) => sum + orderProfit(order), 0);
   const averageTicket = paidOrders.length ? revenue / paidOrders.length : 0;
   const byStatus = Object.values(
     orders.reduce((acc, order) => {
@@ -705,9 +787,11 @@ function summarizeReports(store) {
   ).sort((a, b) => b.revenue - a.revenue);
   const products = Object.values(
     paidItems.reduce((acc, item) => {
-      acc[item.productId] ||= { productId: item.productId, name: item.name, quantity: 0, revenue: 0 };
+      acc[item.productId] ||= { productId: item.productId, name: item.name, quantity: 0, revenue: 0, cost: 0, profit: 0 };
       acc[item.productId].quantity += Number(item.quantity || 0);
       acc[item.productId].revenue += Number(item.price || 0) * Number(item.quantity || 0);
+      acc[item.productId].cost += Number(item.cost || 0) * Number(item.quantity || 0);
+      acc[item.productId].profit = acc[item.productId].revenue - acc[item.productId].cost;
       return acc;
     }, {}),
   ).sort((a, b) => b.revenue - a.revenue);
@@ -718,6 +802,8 @@ function summarizeReports(store) {
       stock: Number(product.stock || 0),
       active: product.active !== false,
       estimatedValue: Number(product.stock || 0) * Number(product.price || 0),
+      estimatedCost: Number(product.stock || 0) * Number(product.cost || 0),
+      minStock: Number(product.minStock || 3),
     }))
     .sort((a, b) => a.stock - b.stock);
   const reviews = {
@@ -729,12 +815,16 @@ function summarizeReports(store) {
   return {
     overview: {
       revenue,
+      cost,
+      profit,
+      margin: revenue ? (profit / revenue) * 100 : 0,
       paidOrders: paidOrders.length,
       totalOrders: orders.length,
       averageTicket,
       itemsSold: paidItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
       customers: (store.users || []).filter((user) => user.role === "customer").length,
       stockValue: stock.reduce((sum, item) => sum + item.estimatedValue, 0),
+      stockCost: stock.reduce((sum, item) => sum + item.estimatedCost, 0),
     },
     byDay: groupByDay(paidOrders).slice(0, 30),
     byStatus,
@@ -748,6 +838,7 @@ function summarizeReports(store) {
 
 function summarizeCash(store) {
   const entries = (store.cashEntries || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const closings = (store.cashClosings || []).slice().sort((a, b) => new Date(b.closedAt) - new Date(a.closedAt));
   const paidOrders = (store.orders || []).filter(isPaidOrder);
   const orderIncome = paidOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
   const manualIncome = entries
@@ -766,6 +857,7 @@ function summarizeCash(store) {
       entries: entries.length,
     },
     entries,
+    closings,
     recentOrders: paidOrders.slice().reverse().slice(0, 20),
   };
 }
@@ -792,8 +884,9 @@ function reviewStats(store, productId) {
 }
 
 function publicProduct(product, store) {
+  const { cost, minStock, ...safeProduct } = product;
   return {
-    ...product,
+    ...safeProduct,
     reviewStats: reviewStats(store, product.id),
   };
 }
@@ -900,6 +993,7 @@ function publicOrder(order) {
     shipping: order.shipping,
     discount: order.discount || 0,
     total: order.total,
+    timeline: order.timeline || [],
     coupon: order.coupon
       ? {
           code: order.coupon.code,
@@ -937,6 +1031,8 @@ function ordersCsv(store) {
       "Frete",
       "Cupom",
       "Desconto",
+      "Custo",
+      "Lucro",
       "Total",
     ],
     ...store.orders.map((order) => [
@@ -954,6 +1050,8 @@ function ordersCsv(store) {
       order.shipping,
       order.coupon?.code || "",
       order.discount || 0,
+      orderCost(order),
+      orderProfit(order),
       order.total,
     ]),
   ];
@@ -987,8 +1085,8 @@ function reportCsv(store, type = "orders") {
   const reports = summarizeReports(store);
   if (type === "products") {
     return csvFromRows([
-      ["Produto", "Quantidade vendida", "Faturamento"],
-      ...reports.products.map((product) => [product.name, product.quantity, product.revenue]),
+      ["Produto", "Quantidade vendida", "Faturamento", "Custo", "Lucro"],
+      ...reports.products.map((product) => [product.name, product.quantity, product.revenue, product.cost, product.profit]),
     ]);
   }
   if (type === "customers") {
@@ -1006,8 +1104,29 @@ function reportCsv(store, type = "orders") {
   }
   if (type === "stock") {
     return csvFromRows([
-      ["Produto", "Estoque", "Ativo", "Valor estimado"],
-      ...reports.stock.map((item) => [item.name, item.stock, item.active ? "Sim" : "Nao", item.estimatedValue]),
+      ["Produto", "Estoque", "Estoque minimo", "Ativo", "Valor estimado", "Custo estimado"],
+      ...reports.stock.map((item) => [
+        item.name,
+        item.stock,
+        item.minStock,
+        item.active ? "Sim" : "Nao",
+        item.estimatedValue,
+        item.estimatedCost,
+      ]),
+    ]);
+  }
+  if (type === "profit") {
+    return csvFromRows([
+      ["Pedido", "Data", "Cliente", "Faturamento", "Frete", "Custo", "Lucro"],
+      ...store.orders.filter(isPaidOrder).map((order) => [
+        order.id,
+        order.createdAt,
+        order.customerName,
+        order.total,
+        order.shipping,
+        orderCost(order),
+        orderProfit(order),
+      ]),
     ]);
   }
   if (type === "cash") {
@@ -1028,20 +1147,33 @@ function reportCsv(store, type = "orders") {
 
 function cleanProduct(input, current = {}) {
   const price = Number(input.price);
+  const cost = Number(input.cost || 0);
   const stock = Number.parseInt(input.stock, 10);
+  const minStock = Number.parseInt(input.minStock, 10);
   if (!String(input.name || "").trim()) throw new Error("Informe o nome do produto.");
   if (!String(input.category || "").trim()) throw new Error("Informe a categoria.");
   if (!Number.isFinite(price) || price < 0) throw new Error("Preço inválido.");
+  if (!Number.isFinite(cost) || cost < 0) throw new Error("Custo invalido.");
   if (!Number.isInteger(stock) || stock < 0) throw new Error("Estoque inválido.");
 
+  const name = String(input.name).trim();
+  const idBase = current.id || slugify(name) || createId("prod");
   return applyProductDefaults({
     ...current,
-    name: String(input.name).trim(),
+    name,
+    slug: slugify(input.slug || current.slug || name),
+    sku: String(input.sku || current.sku || idBase).trim(),
     category: String(input.category).trim(),
     price,
+    cost,
     stock,
+    minStock: Number.isInteger(minStock) && minStock >= 0 ? minStock : current.minStock || 3,
     badge: String(input.badge || "").trim(),
     image: String(input.image || "assets/prod-chef.png").trim(),
+    gallery: normalizeGallery({
+      image: String(input.image || current.image || "assets/prod-chef.png").trim(),
+      gallery: input.gallery || current.gallery || [],
+    }),
     steel: String(input.steel || "").trim(),
     size: String(input.size || "").trim(),
     handleMaterial: String(input.handleMaterial || "").trim(),
@@ -1082,6 +1214,19 @@ function cleanCoupon(input, current = {}) {
   };
 }
 
+function logActivity(store, user, action, detail = "") {
+  store.activityLogs ||= [];
+  store.activityLogs.push({
+    id: createId("log"),
+    action,
+    detail,
+    userId: user?.id || "",
+    userName: user?.name || "Sistema",
+    createdAt: new Date().toISOString(),
+  });
+  store.activityLogs = store.activityLogs.slice(-500);
+}
+
 async function handleApi(req, res, url) {
   const store = await readStore();
   const user = await getSessionUser(req, store);
@@ -1099,6 +1244,18 @@ async function handleApi(req, res, url) {
         publicUrl: runtimeProcess?.env?.PUBLIC_SITE_URL || store.settings.publicUrl || "",
       },
     });
+    return;
+  }
+
+  const publicProductMatch = route.match(/^\/api\/products\/([^/]+)$/);
+  if (method === "GET" && publicProductMatch) {
+    const key = decodeURIComponent(publicProductMatch[1]);
+    const product = store.products.find((item) => item.active && (item.id === key || item.slug === key));
+    if (!product) {
+      sendError(res, 404, "Produto nao encontrado.");
+      return;
+    }
+    sendJson(res, 200, { product: publicProduct(product, store) });
     return;
   }
 
@@ -1162,7 +1319,7 @@ async function handleApi(req, res, url) {
       sendError(res, 403, "Você não tem permissão para consultar este pagamento.");
       return;
     }
-    sendJson(res, 200, { order: result.order });
+    sendJson(res, 200, { order: user.role === "admin" ? result.order : publicOrder(result.order) });
     return;
   }
 
@@ -1225,7 +1382,7 @@ async function handleApi(req, res, url) {
     if (!requireUser(user, res)) return;
     const orders =
       user.role === "admin" ? store.orders : store.orders.filter((order) => order.customerId === user.id);
-    sendJson(res, 200, { orders: orders.slice().reverse() });
+    sendJson(res, 200, { orders: orders.slice().reverse().map((order) => (user.role === "admin" ? order : publicOrder(order))) });
     return;
   }
 
@@ -1282,8 +1439,32 @@ async function handleApi(req, res, url) {
   }
 
   if (method === "POST" && route === "/api/orders") {
-    if (!requireUser(user, res)) return;
     const body = await parseBody(req);
+    let orderUser = user;
+    if (!orderUser) {
+      const email = normalizeEmail(body.customerEmail);
+      const name = String(body.customerName || "").trim();
+      if (!name || !email) {
+        sendError(res, 400, "Informe nome e e-mail para comprar sem cadastro.");
+        return;
+      }
+      orderUser = store.users.find((item) => item.email === email);
+      if (!orderUser) {
+        orderUser = {
+          id: createId("guest"),
+          role: "customer",
+          guest: true,
+          name,
+          email,
+          phone: String(body.customerPhone || "").trim(),
+          passwordHash: await hashPassword(crypto.randomBytes(18).toString("hex")),
+          createdAt: new Date().toISOString(),
+        };
+        store.users.push(orderUser);
+      } else {
+        orderUser.phone ||= String(body.customerPhone || "").trim();
+      }
+    }
     if (!body.ageCheck) {
       sendError(res, 400, "Confirme a maioridade para concluir a compra.");
       return;
@@ -1312,8 +1493,10 @@ async function handleApi(req, res, url) {
       }
       items.push({
         productId: product.id,
+        sku: product.sku || "",
         name: product.name,
         price: product.price,
+        cost: Number(product.cost || 0),
         quantity,
       });
     }
@@ -1340,10 +1523,10 @@ async function handleApi(req, res, url) {
     const wantsMercadoPago = String(body.paymentMethod || "").toLowerCase().includes("mercado");
     const order = {
       id: createId("PED").toUpperCase(),
-      customerId: user.id,
-      customerName: user.name,
-      customerEmail: user.email,
-      customerPhone: user.phone || "",
+      customerId: orderUser.id,
+      customerName: orderUser.name,
+      customerEmail: orderUser.email,
+      customerPhone: orderUser.phone || String(body.customerPhone || "").trim(),
       address: String(body.address).trim(),
       cep: cleanCep(body.cep),
       paymentMethod: String(body.paymentMethod || "Combinar"),
@@ -1362,6 +1545,14 @@ async function handleApi(req, res, url) {
       discount: discount + Number(couponResult.shippingDiscount || 0),
       total: Math.max(0, subtotal - discount + shipping),
       status: wantsMercadoPago ? "Aguardando pagamento" : "Recebido",
+      timeline: [
+        {
+          status: wantsMercadoPago ? "Aguardando pagamento" : "Recebido",
+          note: wantsMercadoPago ? "Pedido criado aguardando pagamento." : "Pedido recebido pela loja.",
+          at: new Date().toISOString(),
+          by: orderUser.id,
+        },
+      ],
       createdAt: new Date().toISOString(),
     };
 
@@ -1388,7 +1579,7 @@ async function handleApi(req, res, url) {
     store.orders.push(order);
     await writeStore(store);
     sendJson(res, 201, {
-      order,
+      order: publicOrder(order),
       payment: payment
         ? {
             provider: "Mercado Pago",
@@ -1419,6 +1610,46 @@ async function handleApi(req, res, url) {
       return;
     }
 
+    if (method === "GET" && route === "/api/admin/logs") {
+      sendJson(res, 200, {
+        logs: (store.activityLogs || []).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 100),
+      });
+      return;
+    }
+
+    if (method === "GET" && route === "/api/admin/backup") {
+      sendJson(res, 200, {
+        exportedAt: new Date().toISOString(),
+        site: store.settings.siteName || "Facas Brazão",
+        data: store,
+      }, {
+        "Content-Disposition": "attachment; filename=backup-facas-brazao.json",
+      });
+      return;
+    }
+
+    if (method === "POST" && route === "/api/admin/cash/close") {
+      const body = await parseBody(req);
+      const cash = summarizeCash(store);
+      const closing = {
+        id: createId("close"),
+        period: String(body.period || new Date().toISOString().slice(0, 10)).trim(),
+        openingBalance: Number(body.openingBalance || 0),
+        expectedBalance: Number(cash.summary.balance || 0),
+        countedBalance: Number(body.countedBalance || cash.summary.balance || 0),
+        difference: Number(body.countedBalance || cash.summary.balance || 0) - Number(cash.summary.balance || 0),
+        notes: String(body.notes || "").trim(),
+        closedBy: user.id,
+        closedAt: new Date().toISOString(),
+      };
+      store.cashClosings ||= [];
+      store.cashClosings.push(closing);
+      logActivity(store, user, "Fechamento de caixa", `Periodo ${closing.period}`);
+      await writeStore(store);
+      sendJson(res, 201, { closing, cash: summarizeCash(store) });
+      return;
+    }
+
     if (method === "POST" && route === "/api/admin/cash") {
       const body = await parseBody(req);
       const amount = Number(body.amount || 0);
@@ -1442,6 +1673,7 @@ async function handleApi(req, res, url) {
       };
       store.cashEntries ||= [];
       store.cashEntries.push(entry);
+      logActivity(store, user, type === "entrada" ? "Entrada no caixa" : "Saida no caixa", entry.description);
       await writeStore(store);
       sendJson(res, 201, { entry, cash: summarizeCash(store) });
       return;
@@ -1462,6 +1694,7 @@ async function handleApi(req, res, url) {
       const adminUser = store.users.find((item) => item.id === user.id);
       adminUser.passwordHash = await hashPassword(newPassword);
       adminUser.updatedAt = new Date().toISOString();
+      logActivity(store, user, "Senha do admin alterada", adminUser.email);
       await writeStore(store);
       sendJson(res, 200, { ok: true });
       return;
@@ -1530,6 +1763,7 @@ async function handleApi(req, res, url) {
       }
       review.status = String(body.status);
       review.updatedAt = new Date().toISOString();
+      logActivity(store, user, "Avaliacao moderada", `${review.productName}: ${review.status}`);
       await writeStore(store);
       sendJson(res, 200, { review });
       return;
@@ -1546,6 +1780,7 @@ async function handleApi(req, res, url) {
         return;
       }
       store.coupons.push(coupon);
+      logActivity(store, user, "Cupom criado", coupon.code);
       await writeStore(store);
       sendJson(res, 201, { coupon });
       return;
@@ -1564,6 +1799,7 @@ async function handleApi(req, res, url) {
         return;
       }
       Object.assign(coupon, updated);
+      logActivity(store, user, "Cupom atualizado", coupon.code);
       await writeStore(store);
       sendJson(res, 200, { coupon });
       return;
@@ -1577,6 +1813,7 @@ async function handleApi(req, res, url) {
       }
       coupon.active = false;
       coupon.updatedAt = new Date().toISOString();
+      logActivity(store, user, "Cupom desativado", coupon.code);
       await writeStore(store);
       sendJson(res, 200, { coupon });
       return;
@@ -1589,6 +1826,7 @@ async function handleApi(req, res, url) {
         createdAt: new Date().toISOString(),
       });
       store.products.push(product);
+      logActivity(store, user, "Produto criado", product.name);
       await writeStore(store);
       sendJson(res, 201, { product });
       return;
@@ -1602,6 +1840,7 @@ async function handleApi(req, res, url) {
         return;
       }
       Object.assign(product, cleanProduct(await parseBody(req), product));
+      logActivity(store, user, "Produto atualizado", product.name);
       await writeStore(store);
       sendJson(res, 200, { product });
       return;
@@ -1615,6 +1854,7 @@ async function handleApi(req, res, url) {
       }
       product.active = false;
       product.updatedAt = new Date().toISOString();
+      logActivity(store, user, "Produto desativado", product.name);
       await writeStore(store);
       sendJson(res, 200, { product });
       return;
@@ -1633,8 +1873,19 @@ async function handleApi(req, res, url) {
         sendError(res, 404, "Pedido não encontrado.");
         return;
       }
-      order.status = String(body.status || order.status);
+      const nextStatus = String(body.status || order.status);
+      if (nextStatus !== order.status) {
+        order.timeline ||= [];
+        order.timeline.push({
+          status: nextStatus,
+          note: String(body.note || `Status alterado para ${nextStatus}.`),
+          at: new Date().toISOString(),
+          by: user.id,
+        });
+      }
+      order.status = nextStatus;
       order.updatedAt = new Date().toISOString();
+      logActivity(store, user, "Status do pedido alterado", `${order.id}: ${order.status}`);
       await writeStore(store);
       sendJson(res, 200, { order });
       return;
@@ -1691,7 +1942,17 @@ async function handleApi(req, res, url) {
         publicUrl: String(body.publicUrl || "").trim().replace(/\/$/, ""),
         paymentProvider: "Mercado Pago",
         minAgeNotice: String(body.minAgeNotice || "").trim(),
+        primaryColor: String(body.primaryColor || store.settings.primaryColor || defaultVisualSettings().primaryColor).trim(),
+        accentColor: String(body.accentColor || store.settings.accentColor || defaultVisualSettings().accentColor).trim(),
+        dangerColor: String(body.dangerColor || store.settings.dangerColor || defaultVisualSettings().dangerColor).trim(),
+        heroImage: String(body.heroImage || store.settings.heroImage || defaultVisualSettings().heroImage).trim(),
+        buttonRadius: Number(body.buttonRadius ?? store.settings.buttonRadius ?? defaultVisualSettings().buttonRadius),
+        cardRadius: Number(body.cardRadius ?? store.settings.cardRadius ?? defaultVisualSettings().cardRadius),
+        storeLayout: String(body.storeLayout || store.settings.storeLayout || defaultVisualSettings().storeLayout).trim(),
+        announcementText: String(body.announcementText ?? store.settings.announcementText ?? "").trim(),
+        customCss: String(body.customCss ?? store.settings.customCss ?? "").slice(0, 12000),
       };
+      logActivity(store, user, "Configuracoes da loja salvas", store.settings.siteName);
       await writeStore(store);
       sendJson(res, 200, { settings: store.settings });
       return;
