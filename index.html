@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Facas Brazão | Facas artesanais e cutelaria</title>
+    <meta
+      data-meta="description"
+      name="description"
+      content="Facas Brazão: facas artesanais, lâminas para churrasco, cozinha e campo com compra online."
+    />
+    <meta data-meta="og:title" property="og:title" content="Facas Brazão | Facas artesanais e cutelaria" />
+    <meta
+      data-meta="og:description"
+      property="og:description"
+      content="Facas artesanais para churrasco, cozinha e campo com compra online e suporte pelo WhatsApp."
+    />
+    <meta data-meta="og:type" property="og:type" content="website" />
+    <meta data-meta="twitter:card" name="twitter:card" content="summary_large_image" />
+    <meta
+      data-meta="twitter:title"
+      name="twitter:title"
+      content="Facas Brazão | Facas artesanais e cutelaria"
+    />
+    <meta
+      data-meta="twitter:description"
+      name="twitter:description"
+      content="Facas Brazão: facas artesanais, lâminas para churrasco, cozinha e campo com compra online."
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#loja" aria-label="Ir para a loja">
+        <span class="brand-mark" aria-hidden="true">FB</span>
+        <span>
+          <strong data-setting="siteName">Facas Brazão</strong>
+          <small>Cutelaria e churrasco</small>
+        </span>
+      </a>
+
+      <nav class="main-nav" aria-label="Navegação principal">
+        <a href="#loja">Loja</a>
+        <a href="#contato">Contato</a>
+      </nav>
+
+      <div class="header-actions">
+        <button class="account-pill" type="button" data-open-auth>
+          <span data-user-label>Entrar</span>
+        </button>
+        <button class="theme-toggle" type="button" data-theme-toggle aria-label="Alternar tema escuro">
+          <span class="theme-toggle-icon" aria-hidden="true"></span>
+        </button>
+        <button class="cart-trigger" type="button" data-open-cart aria-label="Abrir carrinho">
+          <span>Carrinho</span>
+          <strong data-cart-count>0</strong>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-content">
+          <p class="eyebrow" data-setting="heroEyebrow">Cutelaria artesanal brasileira</p>
+          <h1 id="hero-title" data-setting="siteName">Facas Brazão</h1>
+          <p data-setting="tagline">
+            Facas para churrasco, cozinha e campo com acabamento premium,
+            fio afiado e compra segura.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#loja">Comprar agora</a>
+            <button class="button button-ghost" type="button" data-open-auth>Entrar</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="store-shell" id="loja" aria-labelledby="store-title">
+        <div class="section-heading">
+          <p class="eyebrow">Catálogo</p>
+          <h2 id="store-title" data-setting="storeTitle">Facas à venda</h2>
+          <p data-setting="storeSubtitle">Escolha sua lâmina, adicione ao carrinho e fale com a loja sempre que precisar.</p>
+        </div>
+
+        <div class="store-toolbar" aria-label="Filtros do catálogo">
+          <label class="search-field">
+            <span>Buscar</span>
+            <input id="searchInput" type="search" placeholder="Chef, churrasco, kit..." autocomplete="off" />
+          </label>
+
+          <div class="category-tabs" role="group" aria-label="Categorias">
+            <button class="tab-button is-active" type="button" data-category="todos">Todos</button>
+            <button class="tab-button" type="button" data-category="cozinha">Cozinha</button>
+            <button class="tab-button" type="button" data-category="churrasco">Churrasco</button>
+            <button class="tab-button" type="button" data-category="campo">Campo</button>
+            <button class="tab-button" type="button" data-category="kits">Kits</button>
+          </div>
+
+          <label class="sort-field">
+            <span>Ordenar</span>
+            <select id="sortSelect">
+              <option value="featured">Destaques</option>
+              <option value="price-asc">Menor preço</option>
+              <option value="price-desc">Maior preço</option>
+              <option value="stock">Pronta entrega</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="product-grid" id="productGrid" aria-live="polite"></div>
+      </section>
+
+      <section class="admin-workspace" id="admin" aria-labelledby="admin-title">
+        <div class="section-heading">
+          <p class="eyebrow">Painel administrativo</p>
+          <h2 id="admin-title" data-setting="adminAreaTitle">Gerenciar Facas Brazão</h2>
+          <p data-setting="adminAreaText">
+            Entre como administrador para cadastrar produtos, editar estoque,
+            acompanhar pedidos, clientes e relatórios.
+          </p>
+        </div>
+
+        <div class="admin-shell" data-admin-shell></div>
+      </section>
+
+      <section class="assurance" aria-label="Diferenciais da loja">
+        <article>
+          <strong>Fio pronto para uso</strong>
+          <span>Lâminas selecionadas para corte firme, acabamento bonito e pegada segura.</span>
+        </article>
+        <article>
+          <strong>Compra com suporte</strong>
+          <span>Atendimento direto pelo WhatsApp para tirar dúvidas antes ou depois do pedido.</span>
+        </article>
+        <article>
+          <strong>Envio acompanhado</strong>
+          <span>Pedido registrado na conta do cliente, com status atualizado pela loja.</span>
+        </article>
+      </section>
+
+      <section class="review-showcase" aria-labelledby="reviews-title" data-review-showcase></section>
+
+      <section class="policy-strip" aria-label="Políticas da loja">
+        <article>
+          <strong>Envio</strong>
+          <span data-setting="shippingPolicy">Enviamos para todo o Brasil.</span>
+        </article>
+        <article>
+          <strong>Troca</strong>
+          <span data-setting="exchangePolicy">Trocas por defeito de fabricação podem ser solicitadas após o recebimento.</span>
+        </article>
+        <article>
+          <strong>Garantia</strong>
+          <span data-setting="warrantyPolicy">Garantia contra defeitos de fabricação.</span>
+        </article>
+      </section>
+    </main>
+
+    <aside class="cart-drawer" id="cartDrawer" aria-hidden="true" aria-labelledby="cart-title">
+      <div class="cart-panel" role="dialog" aria-modal="true">
+        <div class="cart-head">
+          <div>
+            <p class="eyebrow">Pedido</p>
+            <h2 id="cart-title">Carrinho</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-cart aria-label="Fechar carrinho">×</button>
+        </div>
+
+        <div class="cart-items" data-cart-items></div>
+
+        <div class="cart-footer">
+          <div class="cart-total">
+            <span>Total</span>
+            <strong data-cart-total>R$ 0,00</strong>
+          </div>
+          <button class="button button-primary" type="button" data-open-checkout>Finalizar compra</button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="modal-backdrop" id="checkoutModal" aria-hidden="true">
+      <section class="checkout-modal" role="dialog" aria-modal="true" aria-labelledby="checkout-title">
+        <button class="icon-button modal-close" type="button" data-close-checkout aria-label="Fechar checkout">×</button>
+        <p class="eyebrow">Checkout</p>
+        <h2 id="checkout-title">Finalizar pedido</h2>
+        <form id="checkoutForm" class="checkout-form">
+          <label>
+            <span>CEP</span>
+            <input name="cep" type="text" inputmode="numeric" placeholder="00000-000" required />
+          </label>
+          <label>
+            <span>Endereço de entrega</span>
+            <input name="address" type="text" placeholder="Rua, número, bairro e cidade" required />
+          </label>
+          <label>
+            <span>Cupom</span>
+            <input name="couponCode" type="text" placeholder="BRAZAO10" />
+          </label>
+          <label>
+            <span>Pagamento</span>
+            <select name="paymentMethod" required>
+              <option value="Mercado Pago">Mercado Pago (PIX, cartão ou boleto)</option>
+              <option value="PIX manual">PIX manual</option>
+              <option value="Combinar">Combinar com a loja</option>
+            </select>
+          </label>
+          <label class="wide-field">
+            <span>Observação</span>
+            <textarea name="notes" rows="3" placeholder="Horário de entrega, gravação, presente..."></textarea>
+          </label>
+          <label class="checkbox-field wide-field">
+            <input name="ageCheck" type="checkbox" required />
+            <span>Confirmo que tenho 18 anos ou mais e seguirei as regras locais de compra e transporte.</span>
+          </label>
+          <div class="checkout-trust wide-field">
+            <strong>Compra protegida pela loja</strong>
+            <span data-setting="shippingPolicy">Enviamos para todo o Brasil.</span>
+            <span data-setting="exchangePolicy">Trocas por defeito de fabricação podem ser solicitadas após o recebimento.</span>
+            <span data-setting="legalPolicy">Venda exclusiva para maiores de 18 anos.</span>
+          </div>
+          <div class="checkout-summary wide-field" data-checkout-summary></div>
+          <button class="button button-primary wide-field" type="submit">Enviar pedido</button>
+          <p class="form-status wide-field" data-checkout-status role="status"></p>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="productModal" aria-hidden="true">
+      <section class="product-modal" role="dialog" aria-modal="true" aria-labelledby="product-detail-title">
+        <button class="icon-button modal-close" type="button" data-close-product aria-label="Fechar detalhes">×</button>
+        <div data-product-detail></div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop auth-backdrop" id="authModal" aria-hidden="true">
+      <section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+        <button class="icon-button modal-close" type="button" data-close-auth aria-label="Fechar acesso">×</button>
+        <div class="auth-modal-head">
+          <p class="eyebrow">Acesso seguro</p>
+          <h2 id="auth-title" data-setting="clientAreaTitle">Entrar na Facas Brazão</h2>
+          <span data-setting="clientAreaText">Conta, cadastro e pedidos em uma janela rápida.</span>
+        </div>
+        <div class="client-panel" data-auth-panel></div>
+      </section>
+    </div>
+
+    <footer class="site-footer" id="contato">
+      <div class="footer-brand">
+        <strong data-setting="footerTitle">Facas Brazão</strong>
+        <span data-setting="footerText">Cutelaria artesanal para churrasco, cozinha e campo.</span>
+      </div>
+      <div class="footer-info">
+        <span data-setting="footerAddress">Atendimento online para todo o Brasil</span>
+        <span data-setting="footerHours">Segunda a sábado, das 9h às 18h</span>
+        <span data-setting="footerDocument">Compra permitida somente para maiores de 18 anos.</span>
+      </div>
+      <a class="footer-whatsapp whatsapp-icon-link" href="#" data-whatsapp-link data-whatsapp-context="footer" aria-label="Falar com a loja no WhatsApp">
+        <span class="whatsapp-mark" aria-hidden="true"></span>
+      </a>
+    </footer>
+
+    <a class="whatsapp-float" href="#" data-whatsapp-link data-whatsapp-context="floating" aria-label="Falar com a loja no WhatsApp">
+      <span class="whatsapp-mark" aria-hidden="true"></span>
+    </a>
+
+    <div class="toast" data-toast role="status" aria-live="polite"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
