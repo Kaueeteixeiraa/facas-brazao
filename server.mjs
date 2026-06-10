@@ -2001,7 +2001,7 @@ export function createServer() {
   });
 }
 
-export async function startServer({ port = Number(runtimeProcess?.env?.PORT) || 5500, host = "127.0.0.1" } = {}) {
+export async function startServer({ port = Number(runtimeProcess?.env?.PORT) || 5500, host = runtimeProcess?.env?.HOST || "127.0.0.1" } = {}) {
   await readStore();
   const server = createServer();
   await new Promise((resolve) => server.listen(port, host, resolve));
