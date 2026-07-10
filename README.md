@@ -1,41 +1,95 @@
 # Facas Brazão
 
-Site de venda de facas artesanais com vitrine, carrinho, cadastro de clientes, checkout, painel administrativo, relatórios e sistema de caixa.
+Loja virtual de facas artesanais com catálogo, filtros, carrinho, checkout, clientes, pedidos, painel administrativo, relatórios, caixa, avaliações, cupons e configurações dinâmicas.
 
-## Recursos principais
+## Stack
 
-- Vitrine com busca, categorias, ordenação e tema claro/escuro.
-- Páginas de detalhe dos produtos com medidas, materiais, garantia, cuidados e WhatsApp.
-- Carrinho e checkout com cálculo de frete, cupom, PIX/manual e integração preparada para Mercado Pago.
-- Cadastro e login de clientes.
-- Área do administrador separada da loja.
-- Cadastro, edição, ativação/desativação, estoque e fotos de produtos.
-- Gestão de pedidos, status, clientes e avaliações.
-- Relatórios de pedidos, produtos, clientes, estoque, vendas por dia e caixa.
-- Exportação CSV dos relatórios.
-- Sistema de caixa com entradas, saídas, saldo, forma de pagamento e histórico.
-- Configuração de textos do site, rodapé, políticas, SEO, WhatsApp, PIX e frete pelo painel.
-- Mensagens de WhatsApp configuráveis para produto, checkout e suporte.
+- Python 3.12
+- Flask, Jinja2, Flask-SQLAlchemy, Flask-Migrate, Flask-Login, Flask-WTF
+- SQLite local ou MySQL via PyMySQL
+- Pillow para upload/tratamento de imagens
+- HTML5, CSS3 e JavaScript puro
+- Gunicorn no Render
 
-## Como rodar
-
-Use Node.js e execute:
-
-```bash
-npm start
-```
-
-Ou:
-
-```bash
-node server.mjs
-```
-
-Depois abra:
+## Estrutura
 
 ```text
-http://127.0.0.1:5500/
+app/
+  models/        modelos SQLAlchemy
+  routes/        rotas da loja, autenticação, carrinho, pedidos e admin
+  services/      regras de produto, pedido, imagem, configuração e importação
+  static/uploads uploads do painel
+migrations/      migrations Flask-Migrate
+tests/           testes pytest
+config.py        configuração por ambiente
+run.py           app Flask
+requirements.txt dependências Python
+Procfile         comando web
+render.yaml      publicação Render
 ```
+
+## Instalação Windows
+
+```bat
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+flask db upgrade
+python run.py
+```
+
+## Instalação Linux
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+flask db upgrade
+gunicorn run:app
+```
+
+## Configuração
+
+Copie `.env.example` para `.env`.
+
+```text
+SECRET_KEY=troque-esta-chave
+DATABASE_URL=sqlite:///facas_brazao.db
+MERCADO_PAGO_ACCESS_TOKEN=
+PUBLIC_SITE_URL=
+PORT=5500
+HOST=127.0.0.1
+AUTO_CREATE_DB=true
+MAX_UPLOAD_MB=8
+```
+
+SQLite local:
+
+```text
+DATABASE_URL=sqlite:///facas_brazao.db
+```
+
+MySQL:
+
+```text
+DATABASE_URL=mysql+pymysql://usuario:senha@localhost/facas_brazao
+```
+
+## Banco e dados antigos
+
+Aplicar migrations:
+
+```bash
+flask db upgrade
+```
+
+Importar `data/store.json` antigo de forma idempotente:
+
+```bash
+flask importar-dados-antigos
+```
+
+O importador preserva IDs quando possível e ignora registros já migrados.
 
 ## Admin inicial
 
@@ -44,60 +98,40 @@ E-mail: admin@facasbrazao.com
 Senha: admin123
 ```
 
-Troque a senha no painel administrativo antes de usar em produção.
+Troque a senha no painel antes de publicar.
 
-## Variáveis de ambiente
+## Execução local
 
-Crie um arquivo `.env` local usando `.env.example` como referência.
-
-```text
-MERCADO_PAGO_ACCESS_TOKEN=
-PORT=5500
-HOST=127.0.0.1
+```bash
+python run.py
 ```
 
-Não coloque tokens reais dentro do código e não envie chaves por chat.
-
-## Pagamento real com Mercado Pago
-
-Para pagamento real, crie uma aplicação no Mercado Pago, copie o Access Token de produção e inicie o servidor com `MERCADO_PAGO_ACCESS_TOKEN`.
-
-Para webhooks funcionarem em produção, configure no painel admin uma URL pública HTTPS da loja, por exemplo:
+Abra:
 
 ```text
-https://www.facasbrazao.com.br
+http://127.0.0.1:5500/
 ```
 
-O checkout cria pedidos como `Aguardando pagamento`, redireciona para o Mercado Pago e atualiza para `Pago` quando o webhook ou retorno confirmar o pagamento.
+## Testes
 
-## Banco de dados local
+```bash
+python -m pytest -q
+```
 
-Os dados locais ficam em:
+## Render
+
+O projeto usa:
 
 ```text
-data/store.json
+Build: pip install -r requirements.txt && flask db upgrade
+Start: gunicorn run:app --bind 0.0.0.0:$PORT
 ```
 
-Esse arquivo não entra no Git porque pode guardar clientes, pedidos, caixa, senhas criptografadas e informações reais. Se ele não existir, o servidor cria uma base inicial automaticamente.
+Configure `SECRET_KEY`, `DATABASE_URL`, `PUBLIC_SITE_URL` e `MERCADO_PAGO_ACCESS_TOKEN` no painel do Render. A pasta persistente de uploads está em `app/static/uploads`.
 
-## Estrutura
+## Solução de problemas
 
-```text
-index.html      Estrutura da página
-styles.css      Layout, tema e responsividade
-app.js          Interface, carrinho, painel e interações
-server.mjs      Servidor, APIs, checkout, admin, relatórios e caixa
-assets/         Imagens oficiais do site
-data/           Banco local gerado em tempo de execução
-uploads/        Fotos enviadas pelo painel admin
-```
-
-## Produção
-
-Antes de publicar:
-
-- Troque a senha inicial do administrador.
-- Configure token real do Mercado Pago fora do código.
-- Use HTTPS.
-- Troque o banco local JSON por um banco profissional se houver muitos pedidos.
-- Faça backup regular de clientes, pedidos, relatórios e caixa.
+- `flask` não encontrado: use `python -m flask ...`.
+- Upload falha: confira `MAX_UPLOAD_MB` e permissões de `app/static/uploads`.
+- Mercado Pago não aparece: configure `MERCADO_PAGO_ACCESS_TOKEN`.
+- MySQL falha: confira usuário, senha, banco e prefixo `mysql+pymysql://`.
