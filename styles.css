@@ -175,6 +175,7 @@ img {
   font-weight: 800;
 }
 
+.main-nav a,
 .main-nav button {
   padding: 0;
   border: 0;
@@ -238,6 +239,10 @@ img {
   min-width: 44px;
   height: 44px;
   place-items: center;
+}
+
+.nav-menu-toggle {
+  display: none;
 }
 
 .theme-toggle-icon {
@@ -434,6 +439,9 @@ body[data-theme="dark"] .theme-toggle-icon::after {
 .store-shell,
 .workspace,
 .admin-workspace,
+.category-showcase,
+.process-section,
+.custom-order,
 .assurance {
   width: min(1180px, calc(100% - 36px));
   margin: 0 auto;
@@ -447,9 +455,23 @@ body.admin-route .admin-workspace {
   display: block;
 }
 
+body.admin-route .hero,
+body.admin-route .announcement-bar,
+body.admin-route .category-showcase,
+body.admin-route .store-shell,
+body.admin-route .process-section,
+body.admin-route .custom-order,
+body.admin-route .assurance,
+body.admin-route .review-showcase,
+body.admin-route .policy-strip {
+  display: none;
+}
+
 .store-shell,
 .workspace,
-.admin-workspace {
+.admin-workspace,
+.process-section,
+.custom-order {
   padding: clamp(42px, 7vw, 78px) 0;
 }
 
@@ -1205,6 +1227,38 @@ td {
   color: var(--ink);
 }
 
+.checkout-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checkout-steps li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  color: var(--muted);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-weight: 850;
+}
+
+.checkout-steps span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  color: #fff;
+  background: var(--green);
+  border-radius: 999px;
+  font-size: 0.82rem;
+}
+
 .announcement-bar {
   margin: 0 auto;
   padding: 12px clamp(20px, 6vw, 84px);
@@ -1212,6 +1266,70 @@ td {
   background: var(--gold);
   font-weight: 900;
   text-align: center;
+}
+
+.category-showcase,
+.process-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.category-showcase {
+  padding: 18px 0 0;
+}
+
+.category-showcase button,
+.process-grid article {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: left;
+  box-shadow: 0 12px 32px rgba(28, 36, 38, 0.07);
+}
+
+.category-showcase button:hover {
+  border-color: var(--green);
+  transform: translateY(-1px);
+}
+
+.category-showcase span,
+.process-grid span,
+.product-category {
+  color: var(--copper);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.category-showcase strong,
+.process-grid strong {
+  line-height: 1.35;
+}
+
+.process-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.process-grid span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: var(--on-accent);
+  background: var(--gold);
+  border-radius: 999px;
+}
+
+.process-grid p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .compact-check {
@@ -1885,9 +2003,18 @@ body[data-store-layout="compact"] .mini-review {
   .main-nav {
     grid-row: 2;
     grid-column: 1 / -1;
+    display: none;
     justify-content: flex-start;
     overflow-x: auto;
     padding-bottom: 2px;
+  }
+
+  .main-nav.is-open {
+    display: flex;
+  }
+
+  .nav-menu-toggle {
+    display: grid;
   }
 
   .header-actions {
@@ -1901,6 +2028,8 @@ body[data-store-layout="compact"] .mini-review {
 
   .review-showcase-grid,
   .policy-strip,
+  .category-showcase,
+  .process-grid,
   .report-grid {
     grid-template-columns: 1fr;
   }
@@ -1925,6 +2054,14 @@ body[data-store-layout="compact"] .mini-review {
     padding: 12px 16px;
   }
 
+  .header-actions {
+    gap: 6px;
+  }
+
+  .brand small {
+    display: none;
+  }
+
   .brand-mark {
     width: 38px;
     height: 38px;
@@ -1945,6 +2082,12 @@ body[data-store-layout="compact"] .mini-review {
 
   .account-pill {
     display: none;
+  }
+
+  .theme-toggle {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
   }
 
   .cart-trigger span {
@@ -1985,6 +2128,7 @@ body[data-store-layout="compact"] .mini-review {
   }
 
   .product-grid,
+  .checkout-steps,
   .auth-grid,
   .auth-portal,
   .admin-login-layout,

@@ -29,12 +29,16 @@ def create_app(config_object=Config):
     from .routes.autenticacao import bp as auth_bp
     from .routes.carrinho import bp as carrinho_bp
     from .routes.loja import bp as loja_bp
+    from .routes.mercado_pago import bp as mercado_pago_bp
+    from .routes.orcamentos import bp as orcamentos_bp
     from .routes.pedidos import bp as pedidos_bp
 
     app.register_blueprint(loja_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(carrinho_bp)
     app.register_blueprint(pedidos_bp)
+    app.register_blueprint(orcamentos_bp)
+    app.register_blueprint(mercado_pago_bp)
     app.register_blueprint(admin_bp)
 
     @login_manager.user_loader
@@ -47,7 +51,7 @@ def create_app(config_object=Config):
             return None
         if not request.path.startswith("/api/"):
             return None
-        if request.path == "/api/payments/mercadopago/webhook":
+        if request.path in {"/api/payments/mercadopago/webhook", "/api/webhooks/mercado-pago"}:
             return None
         token = session.setdefault("csrf_token", __import__("secrets").token_urlsafe(32))
         sent = request.headers.get("X-CSRFToken") or request.headers.get("X-CSRF-Token")

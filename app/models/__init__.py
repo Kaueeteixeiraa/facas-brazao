@@ -5,6 +5,7 @@ from .categoria import Categoria
 from .configuracao import Configuracao
 from .cupom import Cupom
 from .item_pedido import ItemPedido
+from .orcamento import Orcamento
 from .pedido import Pedido
 from .produto import Produto
 from .usuario import Usuario
@@ -18,6 +19,7 @@ __all__ = [
     "Configuracao",
     "Cupom",
     "ItemPedido",
+    "Orcamento",
     "Pedido",
     "Produto",
     "Usuario",

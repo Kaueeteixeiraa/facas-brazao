@@ -51,6 +51,7 @@ const state = {
     categories: [],
     orders: [],
     customers: [],
+    quotes: [],
     coupons: [],
     reviews: [],
     reports: null,
@@ -184,23 +185,73 @@ function toggleTheme() {
   applyTheme();
 }
 
-function syncAdminRoute() {
-  document.body.classList.toggle("admin-route", window.location.hash === "#admin");
+function isAdminPath() {
+  return window.location.hash === "#admin" || window.location.pathname.startsWith("/admin");
 }
 
-function openProductFromHash(hash = window.location.hash) {
-  if (!hash.startsWith("#produto=")) return false;
-  const key = decodeURIComponent(hash.split("=").slice(1).join("="));
+function syncAdminRoute() {
+  document.body.classList.toggle("admin-route", isAdminPath());
+}
+
+function openProductByKey(key) {
   const product = state.products.find((item) => item.id === key || item.slug === key);
   if (!product) return false;
   openProductDetail(product.id);
   return true;
 }
 
+function openProductFromHash(hash = window.location.hash) {
+  if (!hash.startsWith("#produto=")) return false;
+  return openProductByKey(decodeURIComponent(hash.split("=").slice(1).join("=")));
+}
+
+function handlePathRoute() {
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  if (!path.startsWith("/produto/")) closeProductDetail();
+  if (path === "/") return false;
+  const adminTabs = {
+    "/admin": "dashboard",
+    "/admin/produtos": "products",
+    "/admin/pedidos": "orders",
+    "/admin/orcamentos": "quotes",
+    "/admin/clientes": "customers",
+    "/admin/cupons": "coupons",
+    "/admin/avaliacoes": "reviews",
+    "/admin/configuracoes": "settings",
+  };
+  if (adminTabs[path]) {
+    state.adminTab = adminTabs[path];
+    renderAdminShell();
+    scrollToSection("#admin", { updateHistory: false });
+    return true;
+  }
+  if (path === "/produtos") return scrollToSection("#loja", { updateHistory: false });
+  if (path === "/sob-encomenda") return scrollToSection("#sob-encomenda", { updateHistory: false });
+  if (path === "/favoritos") {
+    state.filters.favoritesOnly = true;
+    if (favoritesOnlyInput) favoritesOnlyInput.checked = true;
+    renderProducts();
+    return scrollToSection("#loja", { updateHistory: false });
+  }
+  if (path === "/entrar" || path === "/minha-conta" || path === "/meus-pedidos") {
+    openAuthModal("login");
+    return true;
+  }
+  if (path === "/cadastro") {
+    openAuthModal("register");
+    return true;
+  }
+  if (path.startsWith("/produto/")) {
+    return openProductByKey(decodeURIComponent(path.split("/produto/")[1] || ""));
+  }
+  return false;
+}
+
 function handleHashRoute() {
   syncAdminRoute();
   if (openProductFromHash()) return;
-  if (["#loja", "#contato", "#admin"].includes(window.location.hash)) {
+  if (handlePathRoute()) return;
+  if (["#loja", "#contato", "#admin", "#processo", "#sob-encomenda"].includes(window.location.hash)) {
     scrollToSection(window.location.hash, { updateHistory: false });
   }
 }
@@ -389,7 +440,7 @@ function updateStructuredData() {
           priceCurrency: "BRL",
           price: Number(product.price || 0).toFixed(2),
           availability: product.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
-          url: `${baseUrl}/#produto=${encodeURIComponent(product.slug || product.id)}`,
+          url: `${baseUrl}/produto/${encodeURIComponent(product.slug || product.id)}`,
         },
       },
     })),
@@ -443,7 +494,6 @@ function renderProducts() {
       const quantityInCart = state.cart[product.id] || 0;
       const soldOut = product.stock <= 0;
       const maxed = quantityInCart >= product.stock;
-      const featuredReview = product.reviewStats?.reviews?.[0];
       const favorite = state.favorites.includes(product.id);
       return `
         <article class="product-card">
@@ -457,22 +507,15 @@ function renderProducts() {
           <div class="product-body">
             <div class="product-title-row">
               <h3>${escapeHtml(product.name)}</h3>
-              <span class="product-price">${money.format(product.price)}</span>
             </div>
+            <span class="product-category">${escapeHtml(product.category)}</span>
+            <strong class="product-price">${money.format(product.promoPrice || product.price)}</strong>
             <span class="rating-line">${escapeHtml(reviewLabel(product))}</span>
-            <p>${escapeHtml(product.description)}</p>
-            <ul class="meta-list" aria-label="Especificações">
-              <li>${escapeHtml(product.steel || "Aço selecionado")}</li>
-              <li>${escapeHtml(product.size || "Sob consulta")}</li>
-              <li>${escapeHtml(product.handleMaterial || "Cabo selecionado")}</li>
-              <li>${escapeHtml(product.productionTime || "Pronta entrega")}</li>
-            </ul>
-            ${featuredReview ? `<blockquote class="mini-review">"${escapeHtml(featuredReview.comment)}"</blockquote>` : ""}
             <div class="product-actions">
               <span class="stock ${product.stock <= 3 ? "low" : ""}">${product.stock} em estoque</span>
               <div class="inline-actions">
                 <button class="mini-button" type="button" data-view-product="${product.id}">Detalhes</button>
-                <a class="mini-button" href="#produto=${encodeURIComponent(product.slug || product.id)}">Link</a>
+                <a class="mini-button" href="/produto/${encodeURIComponent(product.slug || product.id)}">Link</a>
                 <button class="button button-primary" type="button" data-add-product="${product.id}" ${soldOut || maxed ? "disabled" : ""}>
                   ${soldOut ? "Esgotado" : maxed ? "No carrinho" : "Adicionar"}
                 </button>
@@ -698,6 +741,21 @@ async function refreshCheckoutPricing() {
   }
 
   renderCheckoutSummary();
+}
+
+async function fillAddressFromCep(value) {
+  const clean = String(value || "").replace(/\D/g, "");
+  const addressInput = document.querySelector('#checkoutForm input[name="address"]');
+  if (clean.length !== 8 || !addressInput || addressInput.value.trim()) return;
+  try {
+    const response = await fetch(`https://viacep.com.br/ws/${clean}/json/`);
+    const data = await response.json();
+    if (!data.erro) {
+      addressInput.value = [data.logradouro, data.bairro, data.localidade && `${data.localidade} - ${data.uf}`].filter(Boolean).join(", ");
+    }
+  } catch (_error) {
+    // CEP continua manual se o servico externo estiver indisponivel.
+  }
 }
 
 function clearCheckoutAdjustments() {
@@ -1037,6 +1095,11 @@ function renderOrdersList(orders) {
               </header>
               <p>${order.items.map((item) => `${item.quantity}x ${escapeHtml(item.name)}`).join(" · ")}</p>
               <strong>${money.format(order.total)}</strong>
+              ${
+                ["Aguardando pagamento", "Rejeitado", "Cancelado"].includes(order.status) && /mercado/i.test(`${order.paymentMethod || ""} ${(order.payment || {}).provider || ""}`)
+                  ? `<button class="mini-button" type="button" data-pay-order="${order.id}">Pagar novamente</button>`
+                  : ""
+              }
               ${renderOrderTimeline(order)}
               ${renderReviewFormsForOrder(order)}
             </article>
@@ -1151,6 +1214,7 @@ function renderAdminShell() {
     ["coupons", "Cupons"],
     ["reviews", "Avaliações"],
     ["orders", "Pedidos"],
+    ["quotes", "Orçamentos"],
     ["customers", "Clientes"],
     ["reports", "Relatórios"],
     ["cash", "Caixa"],
@@ -1189,6 +1253,7 @@ function renderAdminTab() {
   if (state.adminTab === "coupons") return renderAdminCoupons();
   if (state.adminTab === "reviews") return renderAdminReviews();
   if (state.adminTab === "orders") return renderAdminOrders();
+  if (state.adminTab === "quotes") return renderAdminQuotes();
   if (state.adminTab === "customers") return renderAdminCustomers();
   if (state.adminTab === "reports") return renderAdminReports();
   if (state.adminTab === "cash") return renderAdminCash();
@@ -1238,6 +1303,10 @@ function renderAdminDashboard() {
         <span>Avaliações pendentes</span>
         <strong>${summary.pendingReviews || 0}</strong>
       </article>
+      <article class="metric-card">
+        <span>Orçamentos</span>
+        <strong>${summary.pendingQuotes || 0}</strong>
+      </article>
     </div>
 
     <div class="panel admin-control-center">
@@ -1250,6 +1319,7 @@ function renderAdminDashboard() {
       <div class="control-actions">
         <button class="mini-button" type="button" data-admin-tab="products">Produtos e fotos</button>
         <button class="mini-button" type="button" data-admin-tab="orders">Pedidos e entregas</button>
+        <button class="mini-button" type="button" data-admin-tab="quotes">Orçamentos</button>
         <button class="mini-button" type="button" data-admin-tab="customers">Clientes e relatórios</button>
         <button class="mini-button" type="button" data-admin-tab="reports">Relatórios completos</button>
         <button class="mini-button" type="button" data-admin-tab="cash">Caixa</button>
@@ -1900,6 +1970,89 @@ function renderAdminOrders() {
   return renderAdminOrdersList();
 }
 
+function whatsappQuoteLink(quote) {
+  const phone = normalizeBrazilPhone(quote.customerPhone);
+  const message = `Olá, ${quote.customerName}. Aqui é da Facas Brazão. Recebemos seu orçamento ${quote.id} para ${quote.knifeType}.`;
+  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+}
+
+function renderAdminQuotes() {
+  if (!state.admin.quotes.length) return `<div class="empty-state">Nenhum orçamento recebido ainda.</div>`;
+  return `
+    ${adminPageHead("Orçamentos", "Pedidos de faca sob encomenda enviados pela loja.", "")}
+    <div class="table-card">
+      <table>
+        <thead><tr><th>Orçamento</th><th>Cliente</th><th>Faca</th><th>Prazo</th><th>Status</th><th>Ação</th></tr></thead>
+        <tbody>
+          ${state.admin.quotes
+            .map(
+              (quote) => `
+                <tr>
+                  <td><button class="link-button" type="button" data-view-quote="${quote.id}"><strong>${escapeHtml(quote.id)}</strong></button><br /><span class="muted">${dateTime.format(new Date(quote.createdAt))}</span></td>
+                  <td>${escapeHtml(quote.customerName)}<br /><span class="muted">${escapeHtml(quote.customerPhone)}</span></td>
+                  <td>${escapeHtml(quote.knifeType)}<br /><span class="muted">${escapeHtml(quote.budgetRange || "Sem faixa definida")}</span></td>
+                  <td>${escapeHtml(quote.desiredDeadline || "-")}</td>
+                  <td><span class="status-pill ${quote.status === "Aprovado" ? "good" : quote.status === "Recusado" ? "danger" : "warn"}">${escapeHtml(quote.status)}</span></td>
+                  <td><button class="mini-button" type="button" data-view-quote="${quote.id}">Abrir</button></td>
+                </tr>
+              `,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function openQuoteDrawer(id) {
+  const quote = state.admin.quotes.find((item) => item.id === id);
+  if (!quote) return;
+  const statuses = ["Novo", "Em análise", "Aguardando cliente", "Aprovado", "Recusado", "Convertido em pedido"];
+  openAdminOverlay({
+    type: "drawer",
+    title: `Orçamento ${quote.id}`,
+    body: `
+      <form class="order-drawer-content" data-quote-update-form data-quote-id="${quote.id}">
+        <div class="admin-detail-section">
+          <span class="status-pill warn">${escapeHtml(quote.status)}</span>
+          <h3>${escapeHtml(quote.customerName)}</h3>
+          <p>${escapeHtml(quote.customerEmail || "")}<br />${escapeHtml(quote.customerPhone)}</p>
+        </div>
+        <div class="admin-detail-section">
+          <h4>Pedido</h4>
+          <p><strong>${escapeHtml(quote.knifeType)}</strong></p>
+          <p>${escapeHtml([quote.mainUse, quote.desiredSize, quote.steelType, quote.handleMaterial].filter(Boolean).join(" • "))}</p>
+          ${quote.engraving ? `<p>Gravação: ${escapeHtml(quote.engravingText || "sim")}</p>` : ""}
+          ${quote.notes ? `<p>${escapeHtml(quote.notes)}</p>` : ""}
+        </div>
+        <label>
+          <span>Status</span>
+          <select name="status">
+            ${statuses.map((status) => `<option value="${status}" ${quote.status === status ? "selected" : ""}>${status}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>Valor estimado</span>
+          <input name="estimatedValue" type="number" min="0" step="0.01" value="${quote.estimatedValue || ""}" />
+        </label>
+        <label>
+          <span>Prazo estimado</span>
+          <input name="estimatedDeadline" type="text" value="${escapeHtml(quote.estimatedDeadline || "")}" />
+        </label>
+        <label>
+          <span>Resposta ao cliente</span>
+          <textarea name="adminResponse" rows="4">${escapeHtml(quote.adminResponse || "")}</textarea>
+        </label>
+        <div class="admin-modal-actions">
+          ${String(quote.customerPhone || "").replace(/\D/g, "").length >= 10 ? `<a class="button button-secondary" href="${whatsappQuoteLink(quote)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
+          <button class="button button-primary" type="submit">Salvar orçamento</button>
+        </div>
+        <p class="form-status" role="status"></p>
+      </form>
+    `,
+  });
+}
+
 function renderAdminCustomersList() {
   const search = state.adminSearch.customers.toLowerCase();
   const customers = state.admin.customers.filter((customer) =>
@@ -2407,12 +2560,13 @@ async function loadMyOrders() {
 
 async function loadAdminData() {
   if (!state.user || state.user.role !== "admin") return;
-  const [summary, products, categories, orders, customers, coupons, reviews, reports, cash, logs] = await Promise.all([
+  const [summary, products, categories, orders, customers, quotes, coupons, reviews, reports, cash, logs] = await Promise.all([
     api("/api/admin/summary"),
     api("/api/admin/products"),
     api("/api/admin/categories"),
     api("/api/admin/orders"),
     api("/api/admin/customers"),
+    api("/api/admin/orcamentos"),
     api("/api/admin/coupons"),
     api("/api/admin/reviews"),
     api("/api/admin/reports"),
@@ -2424,6 +2578,7 @@ async function loadAdminData() {
   state.admin.categories = categories.categories;
   state.admin.orders = orders.orders;
   state.admin.customers = customers.customers;
+  state.admin.quotes = quotes.orcamentos;
   state.admin.coupons = coupons.coupons;
   state.admin.reviews = reviews.reviews;
   state.admin.reports = reports.reports;
@@ -2452,9 +2607,17 @@ async function loadBootstrap() {
 async function handlePaymentReturn() {
   const params = new URLSearchParams(window.location.search);
   const paymentId = params.get("payment_id") || params.get("collection_id");
-  const paymentStatus = params.get("payment");
+  const path = window.location.pathname;
+  const pathStatus = path.includes("/pagamento/sucesso")
+    ? "success"
+    : path.includes("/pagamento/pendente")
+      ? "pending"
+      : path.includes("/pagamento/falha")
+        ? "failure"
+        : "";
+  const paymentStatus = params.get("payment") || params.get("collection_status") || pathStatus;
 
-  if (paymentId && state.user) {
+  if (paymentId) {
     try {
       await api("/api/payments/mercadopago/sync", {
         method: "POST",
@@ -2465,16 +2628,16 @@ async function handlePaymentReturn() {
     } catch (error) {
       showToast(`Retorno de pagamento recebido: ${error.message}`);
     }
-  } else if (paymentStatus === "success") {
+  } else if (["success", "approved"].includes(paymentStatus)) {
     showToast("Pagamento aprovado. O pedido será atualizado pelo Mercado Pago.");
   } else if (paymentStatus === "pending") {
     showToast("Pagamento pendente. A loja atualizará o pedido assim que houver confirmação.");
-  } else if (paymentStatus === "failure") {
+  } else if (["failure", "rejected"].includes(paymentStatus)) {
     showToast("Pagamento não aprovado. Você pode tentar novamente ou combinar com a loja.");
   }
 
   if (paymentStatus || paymentId) {
-    const cleanUrl = `${window.location.pathname}${window.location.hash || ""}`;
+    const cleanUrl = window.location.pathname.startsWith("/pagamento/") ? "/" : `${window.location.pathname}${window.location.hash || ""}`;
     window.history.replaceState({}, "", cleanUrl);
   }
 }
@@ -2526,6 +2689,19 @@ async function logout() {
   showToast("Você saiu da conta.");
 }
 
+async function submitQuote(form) {
+  const data = new FormData(form);
+  const payload = Object.fromEntries(data.entries());
+  payload.engraving = data.get("engraving") === "on";
+  const response = await api("/api/orcamentos", {
+    method: "POST",
+    body: payload,
+  });
+  form.reset();
+  setFormStatus(form, `Orçamento ${response.orcamento.id} enviado. A loja vai responder pelo WhatsApp.`);
+  showToast("Orçamento enviado.");
+}
+
 async function submitOrder(form) {
   const data = new FormData(form);
   const payload = await api("/api/orders", {
@@ -2560,6 +2736,30 @@ async function submitOrder(form) {
   await loadBootstrap();
   form.reset();
   renderCheckoutSummary();
+}
+
+async function payOrderAgain(id) {
+  const payload = await api("/api/pagamentos/mercado-pago/preferencia", {
+    method: "POST",
+    body: { orderId: id },
+  });
+  showToast("Abrindo pagamento Mercado Pago.");
+  window.location.href = payload.payment.redirectUrl;
+}
+
+async function saveQuoteUpdate(form) {
+  const id = form.dataset.quoteId;
+  const data = new FormData(form);
+  const payload = await api(`/api/admin/orcamentos/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: Object.fromEntries(data.entries()),
+  });
+  const index = state.admin.quotes.findIndex((quote) => quote.id === id);
+  if (index >= 0) state.admin.quotes[index] = payload.orcamento;
+  setFormStatus(form, "Orçamento atualizado.");
+  showToast("Orçamento atualizado.");
+  await loadAdminData();
+  renderAdminShell();
 }
 
 async function uploadProductImage(file) {
@@ -2840,6 +3040,17 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  const routeAnchor = target.closest('a[href^="/"]');
+  if (routeAnchor && !routeAnchor.hasAttribute("download") && !routeAnchor.getAttribute("target")) {
+    const url = new URL(routeAnchor.href, window.location.href);
+    if (url.origin === window.location.origin && !url.pathname.startsWith("/api/")) {
+      event.preventDefault();
+      window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      handleHashRoute();
+      return;
+    }
+  }
+
   const scrollControl = target.closest("[data-scroll-target]");
   if (scrollControl) {
     event.preventDefault();
@@ -2857,6 +3068,19 @@ document.addEventListener("click", async (event) => {
 
   if (target.closest("[data-theme-toggle]")) {
     toggleTheme();
+    return;
+  }
+
+  if (target.closest("[data-toggle-nav]")) {
+    document.querySelector(".main-nav")?.classList.toggle("is-open");
+    return;
+  }
+
+  if (target.closest("[data-open-favorites]")) {
+    state.filters.favoritesOnly = true;
+    if (favoritesOnlyInput) favoritesOnlyInput.checked = true;
+    renderProducts();
+    scrollToSection("#loja");
     return;
   }
 
@@ -2902,7 +3126,7 @@ document.addEventListener("click", async (event) => {
   if (viewProductButton) {
     const product = productById(viewProductButton.dataset.viewProduct);
     openProductDetail(viewProductButton.dataset.viewProduct);
-    if (product) window.history.pushState({}, "", `#produto=${encodeURIComponent(product.slug || product.id)}`);
+    if (product) window.history.pushState({}, "", `/produto/${encodeURIComponent(product.slug || product.id)}`);
     return;
   }
 
@@ -2956,6 +3180,7 @@ document.addEventListener("click", async (event) => {
     document.querySelectorAll("[data-category]").forEach((tab) => tab.classList.remove("is-active"));
     categoryButton.classList.add("is-active");
     renderProducts();
+    scrollToSection("#loja");
     return;
   }
 
@@ -3042,6 +3267,18 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  const payOrderButton = target.closest("[data-pay-order]");
+  if (payOrderButton) {
+    await payOrderAgain(payOrderButton.dataset.payOrder);
+    return;
+  }
+
+  const viewQuoteButton = target.closest("[data-view-quote]");
+  if (viewQuoteButton) {
+    openQuoteDrawer(viewQuoteButton.dataset.viewQuote);
+    return;
+  }
+
   const viewCustomerButton = target.closest("[data-view-customer]");
   if (viewCustomerButton) {
     openCustomerDrawer(viewCustomerButton.dataset.viewCustomer);
@@ -3068,7 +3305,9 @@ document.addEventListener("submit", async (event) => {
   try {
     if (form.matches("[data-login-form]")) await login(form);
     if (form.matches("[data-register-form]")) await register(form);
+    if (form.matches("[data-quote-form]")) await submitQuote(form);
     if (form.matches("#checkoutForm")) await submitOrder(form);
+    if (form.matches("[data-quote-update-form]")) await saveQuoteUpdate(form);
     if (form.matches("[data-product-form]")) await saveProduct(form);
     if (form.matches("[data-category-form]")) await saveCategory(form);
     if (form.matches("[data-coupon-form]")) await saveCoupon(form);
@@ -3091,6 +3330,7 @@ document.addEventListener("change", async (event) => {
     state.checkout.cep = target.value;
     try {
       await refreshCheckoutPricing();
+      await fillAddressFromCep(target.value);
     } catch (error) {
       showToast(error.message);
     }
@@ -3100,6 +3340,7 @@ document.addEventListener("change", async (event) => {
     state.checkout.couponCode = target.value.trim();
     try {
       await refreshCheckoutPricing();
+      await fillAddressFromCep(state.checkout.cep);
     } catch (error) {
       state.checkout.coupon = { message: error.message };
       renderCheckoutSummary();
@@ -3191,6 +3432,7 @@ authModal?.addEventListener("click", (event) => {
 });
 
 window.addEventListener("hashchange", handleHashRoute);
+window.addEventListener("popstate", handleHashRoute);
 
 document.addEventListener("keydown", (event) => {
   const adminOverlay = document.querySelector("[data-admin-overlay]");

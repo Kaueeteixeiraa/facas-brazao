@@ -10,13 +10,16 @@ from app.models import (
     CaixaLancamento,
     Categoria,
     Cupom,
+    Orcamento,
     Pedido,
     Produto,
 )
 from app.services.configuracao_service import get_settings, save_settings
 from app.services.imagem_service import save_product_image
+from app.services.orcamento_service import update_orcamento
 from app.services.pedido_service import report_csv, summarize_cash, summarize_customers, summarize_reports, summarize_store
 from app.services.produto_service import create_id, now_iso, product_from_payload, slugify
+from app.services.stock_service import confirm_reserved_stock, release_reserved_stock
 
 bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
@@ -339,6 +342,26 @@ def orders():
     return jsonify({"orders": [item.to_dict() for item in Pedido.query.order_by(Pedido.created_at.desc()).all()]})
 
 
+@bp.get("/orcamentos")
+def orcamentos():
+    return jsonify({"orcamentos": [item.to_dict() for item in Orcamento.query.order_by(Orcamento.created_at.desc()).all()]})
+
+
+@bp.put("/orcamentos/<quote_id>")
+def orcamento_update(quote_id):
+    quote = db.session.get(Orcamento, quote_id)
+    if not quote:
+        return jsonify({"error": "Orcamento nao encontrado."}), 404
+    try:
+        update_orcamento(quote, request.get_json(silent=True) or {})
+        log_action("Orcamento atualizado", f"{quote.id}: {quote.status}")
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"orcamento": quote.to_dict()})
+
+
 @bp.put("/orders/<order_id>")
 def order_update(order_id):
     order = db.session.get(Pedido, order_id)
@@ -350,6 +373,10 @@ def order_update(order_id):
         timeline = order.timeline or []
         timeline.append({"status": next_status, "note": str(body.get("note") or f"Status alterado para {next_status}."), "at": now_iso(), "by": current_user.id})
         order.timeline = timeline
+        if next_status == "Cancelado":
+            release_reserved_stock(order)
+        elif next_status == "Pago":
+            confirm_reserved_stock(order)
     order.status = next_status
     order.updated_at = now_iso()
     log_action("Status do pedido alterado", f"{order.id}: {order.status}")

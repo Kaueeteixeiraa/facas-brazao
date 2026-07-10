@@ -1,14 +1,10 @@
-import json
-import urllib.error
-import urllib.request
-
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, jsonify, request
 from flask_login import current_user
 
 from app.extensions import db
 from app.models import Avaliacao, ItemPedido, Pedido, Produto
 from app.routes.loja import public_product
-from app.services.configuracao_service import get_settings
+from app.services.mercado_pago_service import create_preference
 from app.services.pedido_service import create_order
 from app.services.produto_service import create_id, now_iso
 
@@ -19,53 +15,6 @@ def require_user():
     if not current_user.is_authenticated:
         return jsonify({"error": "Entre na conta para continuar."}), 401
     return None
-
-
-def public_base_url():
-    settings = get_settings()
-    return current_app.config["PUBLIC_SITE_URL"] or settings.get("publicUrl") or request.host_url.rstrip("/")
-
-
-def create_mp_preference(order):
-    token = current_app.config["MERCADO_PAGO_ACCESS_TOKEN"]
-    if not token:
-        raise ValueError("Mercado Pago ainda nao esta configurado.")
-    base = public_base_url()
-    payload = {
-        "external_reference": order.id,
-        "items": [
-            {
-                "id": item.product_id,
-                "title": item.name,
-                "quantity": item.quantity,
-                "unit_price": float(item.price),
-                "currency_id": "BRL",
-            }
-            for item in order.items
-        ],
-        "payer": {"name": order.customer_name, "email": order.customer_email},
-        "back_urls": {
-            "success": f"{base}/?payment=success",
-            "pending": f"{base}/?payment=pending",
-            "failure": f"{base}/?payment=failure",
-        },
-        "notification_url": f"{base}/api/payments/mercadopago/webhook",
-        "auto_return": "approved",
-    }
-    if order.shipping:
-        payload["shipments"] = {"cost": float(order.shipping), "mode": "not_specified"}
-    req = urllib.request.Request(
-        "https://api.mercadopago.com/checkout/preferences",
-        data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as response:
-            return json.loads(response.read().decode())
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode(errors="ignore")
-        raise ValueError(body or "Nao foi possivel criar o pagamento no Mercado Pago.") from exc
 
 
 @bp.get("/my/orders")
@@ -85,19 +34,12 @@ def orders_create():
         order = create_order(body, current_user if current_user.is_authenticated else None)
         payment = None
         if "mercado" in str(order.payment_method or "").lower():
-            pref = create_mp_preference(order)
+            pref = create_preference(order)
             payment = {
                 "provider": "Mercado Pago",
                 "preferenceId": pref.get("id"),
                 "redirectUrl": pref.get("init_point") or pref.get("sandbox_init_point"),
                 "sandboxRedirectUrl": pref.get("sandbox_init_point"),
-            }
-            order.payment = {
-                "provider": "Mercado Pago",
-                "preferenceId": pref.get("id"),
-                "initPoint": pref.get("init_point"),
-                "sandboxInitPoint": pref.get("sandbox_init_point"),
-                "status": "preference_created",
             }
         db.session.commit()
     except Exception as exc:

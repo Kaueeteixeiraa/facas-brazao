@@ -10,6 +10,7 @@ from app.models import (
     Pedido,
     Produto,
     Usuario,
+    Orcamento,
 )
 from app.services.configuracao_service import get_settings
 from app.services.produto_service import create_id, now_iso
@@ -147,6 +148,7 @@ def create_order(payload, user=None):
     shipping = max(0, shipping_quote["fee"] - coupon_result["shippingDiscount"])
     discount = float(coupon_result["discount"] or 0)
     wants_mp = "mercado" in str(payload.get("paymentMethod") or "").lower()
+    payment_method = str(payload.get("paymentMethod") or "Combinar")
     status = "Aguardando pagamento" if wants_mp else "Recebido"
     order = Pedido(
         id=create_id("PED").upper(),
@@ -156,7 +158,7 @@ def create_order(payload, user=None):
         customer_phone=order_user.phone or str(payload.get("customerPhone") or "").strip(),
         address=str(payload.get("address")).strip(),
         cep=clean_cep(payload.get("cep")),
-        payment_method=str(payload.get("paymentMethod") or "Combinar"),
+        payment_method=payment_method,
         notes=str(payload.get("notes") or "").strip(),
         subtotal=subtotal,
         shipping=shipping,
@@ -166,8 +168,21 @@ def create_order(payload, user=None):
         timeline=[{"status": status, "note": "Pedido criado aguardando pagamento." if wants_mp else "Pedido recebido pela loja.", "at": now_iso(), "by": order_user.id}],
         shipping_quote=shipping_quote,
         coupon=coupon_result["coupon"],
+        payment={
+            "provider": "Mercado Pago" if wants_mp else payment_method,
+            "status": "pending" if wants_mp else "manual_pending",
+            "amount": max(0, subtotal - discount + shipping),
+            "externalReference": "",
+            "stockReserved": True,
+            "stockConfirmed": False,
+            "stockReleased": False,
+            "attempts": 0,
+            "createdAt": now_iso(),
+            "updatedAt": now_iso(),
+        },
         created_at=now_iso(),
     )
+    order.payment = {**order.payment, "externalReference": order.id}
     order.items = order_items
     db.session.add(order)
     return order
@@ -248,6 +263,7 @@ def summarize_store():
         "customers": Usuario.query.filter_by(role="customer").count(),
         "products": Produto.query.count(),
         "pendingReviews": Avaliacao.query.filter_by(status="pending").count(),
+        "pendingQuotes": Orcamento.query.filter(Orcamento.status.in_(["Novo", "Em análise", "Aguardando cliente"])).count(),
         "lowStock": [item.to_dict() for item in low_stock],
         "topProducts": sorted(top.values(), key=lambda item: item["quantity"], reverse=True)[:5],
     }
