@@ -120,13 +120,34 @@ img {
 
 .brand-mark {
   display: grid;
-  width: 42px;
-  height: 42px;
+  width: 46px;
+  height: 46px;
   place-items: center;
-  color: #fff;
-  background: linear-gradient(135deg, var(--green), var(--copper));
-  border-radius: 8px;
-  font-weight: 900;
+  background:
+    linear-gradient(145deg, rgba(251, 251, 246, 0.16), transparent),
+    linear-gradient(135deg, var(--solid), var(--green));
+  border: 1px solid rgba(211, 154, 53, 0.72);
+  border-radius: 10px;
+  box-shadow: 0 10px 26px rgba(28, 36, 38, 0.18);
+}
+
+.brand-logo {
+  width: 34px;
+  height: 34px;
+}
+
+.logo-shield {
+  fill: rgba(251, 251, 246, 0.08);
+  stroke: var(--gold);
+  stroke-width: 1.8;
+}
+
+.logo-blade {
+  fill: var(--paper);
+}
+
+.logo-handle {
+  fill: var(--copper);
 }
 
 .brand strong,
@@ -732,15 +753,15 @@ textarea:focus {
 
 .auth-card {
   display: grid;
-  gap: 7px;
-  min-height: 144px;
-  padding: 18px;
-  border: 1px solid var(--line);
+  gap: 9px;
+  min-height: 124px;
+  padding: 18px 20px;
+  border: 1px solid rgba(91, 189, 134, 0.24);
   border-radius: 8px;
   color: var(--ink);
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.03);
   text-align: left;
-  box-shadow: 0 12px 32px rgba(28, 36, 38, 0.06);
+  box-shadow: none;
 }
 
 .auth-card span,
@@ -754,12 +775,14 @@ textarea:focus {
 
 .auth-card.is-active {
   border-color: var(--green);
-  background: var(--soft);
+  background: rgba(91, 189, 134, 0.12);
   box-shadow: 0 14px 34px rgba(47, 101, 79, 0.16);
 }
 
 .auth-panel {
-  border-color: rgba(47, 101, 79, 0.32);
+  padding: 22px;
+  border-color: rgba(47, 101, 79, 0.34);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .admin-gate {
@@ -1296,10 +1319,10 @@ body[data-store-layout="compact"] .mini-review {
 .auth-modal {
   position: relative;
   isolation: isolate;
-  width: min(860px, 100%);
-  max-height: min(780px, 92vh);
+  width: min(820px, 100%);
+  max-height: min(740px, 90vh);
   overflow: hidden auto;
-  padding: clamp(22px, 4vw, 34px);
+  padding: clamp(24px, 4vw, 36px);
   color: var(--ink);
   background:
     linear-gradient(135deg, rgba(47, 101, 79, 0.18), transparent 38%),
@@ -1341,10 +1364,23 @@ body[data-store-layout="compact"] .mini-review {
   animation: auth-scan 2.8s linear infinite;
 }
 
-.auth-modal .modal-close,
 .auth-modal-head {
   position: relative;
   z-index: 3;
+}
+
+.auth-modal .modal-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 4;
+  color: var(--paper);
+  background: rgba(91, 189, 134, 0.16);
+  border: 1px solid rgba(91, 189, 134, 0.32);
+}
+
+.auth-modal .modal-close:hover {
+  background: var(--green);
 }
 
 .auth-modal .client-panel {
@@ -1355,15 +1391,15 @@ body[data-store-layout="compact"] .mini-review {
 .auth-modal-head {
   display: grid;
   gap: 8px;
-  max-width: 620px;
-  margin-bottom: 18px;
+  max-width: 600px;
+  margin: 10px 56px 22px 0;
 }
 
 .auth-modal-head h2 {
   margin: 0;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(2.4rem, 6vw, 4.8rem);
-  line-height: 0.95;
+  font-size: clamp(2.2rem, 5vw, 4.1rem);
+  line-height: 0.98;
 }
 
 .auth-modal-head span {
@@ -1892,6 +1928,19 @@ body[data-store-layout="compact"] .mini-review {
   .brand-mark {
     width: 38px;
     height: 38px;
+  }
+
+  .brand-logo {
+    width: 29px;
+    height: 29px;
+  }
+
+  .auth-modal {
+    padding: 58px 18px 22px;
+  }
+
+  .auth-modal-head {
+    margin-right: 0;
   }
 
   .account-pill {
