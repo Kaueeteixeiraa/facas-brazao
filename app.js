@@ -233,6 +233,14 @@ function syncAdminRoute() {
   document.body.classList.toggle("admin-route", isAdminPath());
 }
 
+function updateRouteMeta() {
+  const baseUrl = (state.settings.publicUrl || window.location.origin).replace(/\/+$/, "");
+  const path = window.location.pathname || "/";
+  const url = `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  document.querySelector("[data-canonical]")?.setAttribute("href", url);
+  document.querySelector('[data-meta="og:url"]')?.setAttribute("content", url);
+}
+
 function openProductByKey(key) {
   const product = state.products.find((item) => item.id === key || item.slug === key);
   if (!product) return false;
@@ -289,6 +297,7 @@ function handlePathRoute() {
 
 function handleHashRoute() {
   syncAdminRoute();
+  updateRouteMeta();
   if (openProductFromHash()) return;
   if (handlePathRoute()) return;
   if (["#loja", "#contato", "#admin", "#processo", "#sob-encomenda"].includes(window.location.hash)) {
@@ -442,6 +451,7 @@ function renderSettings() {
     node.textContent = state.settings[key] || settingFallbacks[key] || "";
   });
   updateWhatsappLinks();
+  updateRouteMeta();
   updateStructuredData();
 }
 
@@ -3250,6 +3260,7 @@ document.addEventListener("click", async (event) => {
     const product = productById(viewProductButton.dataset.viewProduct);
     openProductDetail(viewProductButton.dataset.viewProduct);
     if (product) window.history.pushState({}, "", `/produto/${encodeURIComponent(product.slug || product.id)}`);
+    updateRouteMeta();
     return;
   }
 

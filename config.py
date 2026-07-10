@@ -20,6 +20,9 @@ class Config:
     PUBLIC_SITE_URL = os.getenv("APP_PUBLIC_URL") or os.getenv("PUBLIC_SITE_URL", "")
     AUTO_CREATE_DB = os.getenv("AUTO_CREATE_DB", "true").lower() == "true"
     UPLOAD_FOLDER = BASE_DIR / "app" / "static" / "uploads"
+    SESSION_LIFETIME_MINUTES = int(os.getenv("SESSION_LIFETIME_MINUTES", "120"))
+    LOGIN_RATE_LIMIT_ATTEMPTS = int(os.getenv("LOGIN_RATE_LIMIT_ATTEMPTS", "6"))
+    LOGIN_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("LOGIN_RATE_LIMIT_WINDOW_SECONDS", "600"))
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = os.getenv("FLASK_ENV") == "production"

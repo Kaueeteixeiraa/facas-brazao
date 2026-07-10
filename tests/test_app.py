@@ -88,6 +88,41 @@ def test_login_and_admin_protection(client):
     assert client.get("/api/admin/summary").status_code == 403
 
 
+def test_login_rate_limit(client):
+    csrf = token(client)
+    headers = {"X-CSRFToken": csrf, "X-Forwarded-For": "10.0.0.99"}
+    for _ in range(6):
+        response = client.post(
+            "/api/login",
+            json={"email": "admin@facasbrazao.com", "password": "errada"},
+            headers=headers,
+        )
+        assert response.status_code == 401
+    blocked = client.post(
+        "/api/login",
+        json={"email": "admin@facasbrazao.com", "password": "admin123"},
+        headers=headers,
+    )
+    assert blocked.status_code == 429
+
+
+def test_security_headers_and_seo_routes(client):
+    home = client.get("/")
+    assert home.headers["X-Content-Type-Options"] == "nosniff"
+    assert "frame-ancestors 'none'" in home.headers["Content-Security-Policy"]
+
+    asset = client.get("/assets/logo-facas-brazao.png")
+    assert "max-age=31536000" in asset.headers["Cache-Control"]
+
+    robots = client.get("/robots.txt")
+    assert robots.status_code == 200
+    assert "Sitemap:" in robots.text
+
+    sitemap = client.get("/sitemap.xml")
+    assert sitemap.status_code == 200
+    assert "/produto/chef-8" in sitemap.text
+
+
 def test_product_crud(client):
     csrf = admin_login(client)
     created = client.post("/api/admin/products", json=product_payload(), headers={"X-CSRFToken": csrf})

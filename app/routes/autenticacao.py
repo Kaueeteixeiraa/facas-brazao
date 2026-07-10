@@ -1,7 +1,8 @@
 import hashlib
 import hmac
+from time import monotonic
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, session
 from flask_login import current_user, login_user, logout_user
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -10,10 +11,35 @@ from app.models import Usuario
 from app.services.produto_service import create_id, now_iso
 
 bp = Blueprint("auth", __name__, url_prefix="/api")
+login_attempts = {}
 
 
 def normalize_email(email):
     return str(email or "").strip().lower()
+
+
+def login_limit_key(email):
+    forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    return f"{forwarded or request.remote_addr or 'local'}:{email}"
+
+
+def recent_login_attempts(key):
+    now = monotonic()
+    window = int(current_app.config.get("LOGIN_RATE_LIMIT_WINDOW_SECONDS", 600))
+    attempts = [stamp for stamp in login_attempts.get(key, []) if now - stamp < window]
+    login_attempts[key] = attempts
+    return attempts
+
+
+def login_rate_limited(key):
+    limit = int(current_app.config.get("LOGIN_RATE_LIMIT_ATTEMPTS", 6))
+    return len(recent_login_attempts(key)) >= limit
+
+
+def record_failed_login(key):
+    attempts = recent_login_attempts(key)
+    attempts.append(monotonic())
+    login_attempts[key] = attempts
 
 
 def verify_password(user, password):
@@ -62,16 +88,24 @@ def register():
     db.session.add(user)
     db.session.commit()
     login_user(user)
+    session.permanent = True
     return jsonify({"user": user.to_public_dict()}), 201
 
 
 @bp.post("/login")
 def login():
     body = request.get_json(silent=True) or {}
-    user = Usuario.query.filter_by(email=normalize_email(body.get("email"))).first()
+    email = normalize_email(body.get("email"))
+    key = login_limit_key(email)
+    if login_rate_limited(key):
+        return jsonify({"error": "Muitas tentativas. Aguarde alguns minutos e tente novamente."}), 429
+    user = Usuario.query.filter_by(email=email).first()
     if not user or not verify_password(user, str(body.get("password") or "")):
+        record_failed_login(key)
         return jsonify({"error": "E-mail ou senha invalidos."}), 401
     login_user(user)
+    session.permanent = True
+    login_attempts.pop(key, None)
     return jsonify({"user": user.to_public_dict()})
 
 

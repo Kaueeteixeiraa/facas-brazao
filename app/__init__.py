@@ -1,12 +1,15 @@
 from pathlib import Path
 import sys
+from urllib.parse import quote
+from xml.sax.saxutils import escape as xml_escape
 
-from flask import Flask, jsonify, render_template, request, send_from_directory, session
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory, session
 
 from config import BASE_DIR, Config
 
 from .extensions import csrf, db, login_manager, migrate
-from .models import Usuario
+from .middleware import init_security
+from .models import Produto, Usuario
 from .services.configuracao_service import ensure_seed_data
 
 
@@ -22,6 +25,7 @@ def create_app(config_object=Config):
     migrate.init_app(app, db)
     login_manager.init_app(app)
     csrf.init_app(app)
+    init_security(app)
     login_manager.login_view = "auth.login"
     Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
 
@@ -64,6 +68,55 @@ def create_app(config_object=Config):
         session.setdefault("csrf_token", __import__("secrets").token_urlsafe(32))
         return render_template("index.html")
 
+    @app.get("/robots.txt")
+    def robots():
+        base_url = public_base_url(app)
+        body = "\n".join(
+            [
+                "User-agent: *",
+                "Allow: /",
+                "Disallow: /admin",
+                "Disallow: /api/",
+                f"Sitemap: {base_url}/sitemap.xml",
+                "",
+            ]
+        )
+        return Response(body, mimetype="text/plain")
+
+    @app.get("/sitemap.xml")
+    def sitemap():
+        base_url = public_base_url(app)
+        urls = [
+            {"loc": f"{base_url}/", "priority": "1.0"},
+            {"loc": f"{base_url}/produtos", "priority": "0.9"},
+            {"loc": f"{base_url}/sob-encomenda", "priority": "0.7"},
+        ]
+        products = (
+            Produto.query.filter_by(active=True)
+            .order_by(Produto.featured.asc(), Produto.name.asc())
+            .all()
+        )
+        for product in products:
+            slug = quote(product.slug or product.id, safe="")
+            urls.append(
+                {
+                    "loc": f"{base_url}/produto/{slug}",
+                    "lastmod": (product.updated_at or product.created_at or "")[:10],
+                    "priority": "0.8",
+                }
+            )
+        lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+        ]
+        for url in urls:
+            lines.extend(["  <url>", f"    <loc>{xml_escape(url['loc'])}</loc>"])
+            if url.get("lastmod"):
+                lines.append(f"    <lastmod>{xml_escape(url['lastmod'])}</lastmod>")
+            lines.extend([f"    <priority>{url['priority']}</priority>", "  </url>"])
+        lines.append("</urlset>")
+        return Response("\n".join(lines), mimetype="application/xml")
+
     @app.get("/styles.css")
     def styles():
         return send_from_directory(BASE_DIR, "styles.css")
@@ -101,6 +154,11 @@ def create_app(config_object=Config):
             db.create_all()
             ensure_seed_data()
     return app
+
+
+def public_base_url(app):
+    configured = str(app.config.get("PUBLIC_SITE_URL") or "").strip().rstrip("/")
+    return configured or request.host_url.rstrip("/")
 
 
 def register_cli(app):
