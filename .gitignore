@@ -6,6 +6,11 @@ node_modules/
 # Local database and uploaded files
 data/store.json
 uploads/
+facas_brazao.db
+instance/
+app/static/uploads/
+__pycache__/
+*.pyc
 
 # Logs and temporary files
 *.log
