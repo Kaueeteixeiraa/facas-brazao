@@ -4,6 +4,7 @@ from .caixa import CaixaFechamento, CaixaLancamento
 from .categoria import Categoria
 from .configuracao import Configuracao
 from .cupom import Cupom
+from .favorito import Favorito
 from .item_pedido import ItemPedido
 from .orcamento import Orcamento
 from .pedido import Pedido
@@ -18,6 +19,7 @@ __all__ = [
     "Categoria",
     "Configuracao",
     "Cupom",
+    "Favorito",
     "ItemPedido",
     "Orcamento",
     "Pedido",

@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request
 from flask_login import current_user
 
 from app.extensions import db
-from app.models import Avaliacao, ItemPedido, Pedido, Produto
+from app.models import Avaliacao, Favorito, ItemPedido, Pedido, Produto
 from app.routes.loja import public_product
 from app.services.mercado_pago_service import create_preference
 from app.services.pedido_service import create_order
@@ -25,6 +25,67 @@ def my_orders():
     query = Pedido.query.order_by(Pedido.created_at.desc())
     orders = query.all() if current_user.role == "admin" else query.filter_by(customer_id=current_user.id).all()
     return jsonify({"orders": [order.to_dict(public=current_user.role != "admin") for order in orders]})
+
+
+def user_favorite_ids():
+    return [
+        item.product_id
+        for item in Favorito.query.filter_by(user_id=current_user.id)
+        .join(Produto, Produto.id == Favorito.product_id)
+        .filter(Produto.active.is_(True))
+        .order_by(Favorito.created_at.desc())
+        .all()
+    ]
+
+
+@bp.get("/my/favorites")
+def my_favorites():
+    error = require_user()
+    if error:
+        return error
+    return jsonify({"productIds": user_favorite_ids()})
+
+
+@bp.put("/my/favorites")
+def my_favorites_replace():
+    error = require_user()
+    if error:
+        return error
+    body = request.get_json(silent=True) or {}
+    ids = list(dict.fromkeys(str(item) for item in (body.get("productIds") or []) if item))
+    products = Produto.query.filter(Produto.id.in_(ids), Produto.active.is_(True)).all() if ids else []
+    valid_ids = {item.id for item in products}
+    Favorito.query.filter_by(user_id=current_user.id).delete()
+    for product_id in ids:
+        if product_id in valid_ids:
+            db.session.add(Favorito(id=create_id("fav"), user_id=current_user.id, product_id=product_id, created_at=now_iso()))
+    db.session.commit()
+    return jsonify({"productIds": user_favorite_ids()})
+
+
+@bp.post("/my/favorites/<product_id>")
+def my_favorite_add(product_id):
+    error = require_user()
+    if error:
+        return error
+    product = Produto.query.filter_by(id=product_id, active=True).first()
+    if not product:
+        return jsonify({"error": "Produto nao encontrado."}), 404
+    favorite = Favorito.query.filter_by(user_id=current_user.id, product_id=product.id).first()
+    if not favorite:
+        db.session.add(Favorito(id=create_id("fav"), user_id=current_user.id, product_id=product.id, created_at=now_iso()))
+        db.session.commit()
+    return jsonify({"productIds": user_favorite_ids()})
+
+
+@bp.delete("/my/favorites/<product_id>")
+def my_favorite_remove(product_id):
+    error = require_user()
+    if error:
+        return error
+    Favorito.query.filter_by(user_id=current_user.id, product_id=product_id).delete()
+    db.session.commit()
+    return jsonify({"productIds": user_favorite_ids()})
 
 
 @bp.post("/orders")

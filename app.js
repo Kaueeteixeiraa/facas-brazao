@@ -36,6 +36,7 @@ const state = {
   selectedProductId: null,
   myOrders: [],
   adminTab: "dashboard",
+  adminCollapsed: localStorage.getItem("facas-brazao-admin-collapsed") === "1",
   authMode: "login",
   theme: localStorage.getItem("facas-brazao-theme") || "light",
   editingProductId: null,
@@ -286,14 +287,34 @@ function saveFavorites() {
   localStorage.setItem("facas-brazao-favorites", JSON.stringify(state.favorites));
 }
 
-function toggleFavorite(id) {
+async function syncFavoritesWithServer() {
+  if (!state.user || state.user.role === "admin") return;
+  const payload = await api("/api/my/favorites");
+  const merged = [...new Set([...(payload.productIds || []), ...state.favorites])].filter((id) => productById(id));
+  state.favorites = merged;
+  saveFavorites();
+  if (merged.length !== (payload.productIds || []).length) {
+    const saved = await api("/api/my/favorites", { method: "PUT", body: { productIds: merged } });
+    state.favorites = saved.productIds || merged;
+    saveFavorites();
+  }
+}
+
+async function toggleFavorite(id) {
   if (state.favorites.includes(id)) {
     state.favorites = state.favorites.filter((item) => item !== id);
+    if (state.user && state.user.role !== "admin") {
+      await api(`/api/my/favorites/${encodeURIComponent(id)}`, { method: "DELETE" });
+    }
   } else {
     state.favorites.push(id);
+    if (state.user && state.user.role !== "admin") {
+      await api(`/api/my/favorites/${encodeURIComponent(id)}`, { method: "POST" });
+    }
   }
   saveFavorites();
   renderProducts();
+  renderClientPanel();
 }
 
 async function api(path, options = {}) {
@@ -982,6 +1003,34 @@ function renderProductReviews(product) {
     .join("");
 }
 
+function renderFavoritesList() {
+  const products = state.favorites.map((id) => productById(id)).filter(Boolean);
+  if (!products.length) return `<div class="empty-state">Nenhum favorito salvo ainda.</div>`;
+  return `
+    <div class="order-list">
+      ${products
+        .map(
+          (product) => `
+            <article class="order-card">
+              <header>
+                <div>
+                  <h4>${escapeHtml(product.name)}</h4>
+                  <p>${escapeHtml(product.category)} • ${money.format(product.promoPrice || product.price)}</p>
+                </div>
+                <button class="mini-button danger" type="button" data-favorite-product="${product.id}">Remover</button>
+              </header>
+              <div class="inline-actions">
+                <button class="mini-button" type="button" data-view-product="${product.id}">Detalhes</button>
+                <button class="mini-button" type="button" data-add-product="${product.id}" ${product.stock <= 0 ? "disabled" : ""}>Adicionar</button>
+              </div>
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderClientPanel() {
   userLabel.textContent = state.user ? state.user.name.split(" ")[0] : "Entrar";
   if (!clientPanel) return;
@@ -1061,6 +1110,16 @@ function renderClientPanel() {
         <button class="button button-primary" type="button" data-open-cart>Ver carrinho</button>
         ${state.user.role === "admin" ? `<a class="button button-secondary" href="#admin">Abrir admin</a>` : ""}
       </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>Favoritos</h3>
+          <p>Produtos salvos na sua conta.</p>
+        </div>
+      </div>
+      ${renderFavoritesList()}
     </div>
 
     <div class="panel">
@@ -1224,20 +1283,25 @@ function renderAdminShell() {
   ];
 
   adminShell.innerHTML = `
-    <div class="admin-tabs" role="group" aria-label="Abas do painel admin">
-      ${tabs
-        .map(
-          ([id, label]) => `
-            <button class="tab-button ${state.adminTab === id ? "is-active" : ""}" type="button" data-admin-tab="${id}">
-              ${label}
-            </button>
-          `,
-        )
-        .join("")}
-      <button class="tab-button danger" type="button" data-logout>Sair</button>
-    </div>
-    <div class="admin-tab-panel">
-      ${renderAdminTab()}
+    <div class="admin-layout ${state.adminCollapsed ? "is-collapsed" : ""}">
+      <aside class="admin-sidebar" aria-label="Menu administrativo">
+        <button class="mini-button" type="button" data-toggle-admin-nav>${state.adminCollapsed ? "Abrir" : "Recolher"}</button>
+        <div class="admin-tabs" role="group" aria-label="Abas do painel admin">
+          ${tabs
+            .map(
+              ([id, label]) => `
+                <button class="tab-button ${state.adminTab === id ? "is-active" : ""}" type="button" data-admin-tab="${id}" title="${label}">
+                  <span>${label}</span>
+                </button>
+              `,
+            )
+            .join("")}
+          <button class="tab-button danger" type="button" data-logout><span>Sair</span></button>
+        </div>
+      </aside>
+      <div class="admin-tab-panel">
+        ${renderAdminTab()}
+      </div>
     </div>
   `;
 }
@@ -2593,6 +2657,7 @@ async function loadBootstrap() {
   state.payment = payload.payment || state.payment;
   state.products = payload.products;
   state.user = payload.user;
+  if (state.user) await syncFavoritesWithServer();
   renderSettings();
   renderProducts();
   renderReviewShowcase();
@@ -3111,7 +3176,7 @@ document.addEventListener("click", async (event) => {
 
   const favoriteButton = target.closest("[data-favorite-product]");
   if (favoriteButton) {
-    toggleFavorite(favoriteButton.dataset.favoriteProduct);
+    await toggleFavorite(favoriteButton.dataset.favoriteProduct);
     return;
   }
 
@@ -3187,6 +3252,13 @@ document.addEventListener("click", async (event) => {
   const adminTabButton = target.closest("[data-admin-tab]");
   if (adminTabButton) {
     state.adminTab = adminTabButton.dataset.adminTab;
+    renderAdminShell();
+    return;
+  }
+
+  if (target.closest("[data-toggle-admin-nav]")) {
+    state.adminCollapsed = !state.adminCollapsed;
+    localStorage.setItem("facas-brazao-admin-collapsed", state.adminCollapsed ? "1" : "0");
     renderAdminShell();
     return;
   }

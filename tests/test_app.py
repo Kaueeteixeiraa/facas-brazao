@@ -203,6 +203,30 @@ def test_quote_create_and_admin_update(client):
     assert updated.json["orcamento"]["estimatedValue"] == 650
 
 
+def test_customer_favorites_persist(client):
+    csrf = token(client)
+    registered = client.post(
+        "/api/register",
+        json={"name": "Favorito", "email": "favorito@teste.com", "password": "123456"},
+        headers={"X-CSRFToken": csrf},
+    )
+    assert registered.status_code == 201
+    added = client.post("/api/my/favorites/chef-8", headers={"X-CSRFToken": csrf})
+    assert added.status_code == 200
+    assert "chef-8" in added.json["productIds"]
+    replaced = client.put("/api/my/favorites", json={"productIds": ["chef-8", "santoku"]}, headers={"X-CSRFToken": csrf})
+    assert replaced.status_code == 200
+    assert replaced.json["productIds"] == ["santoku", "chef-8"]
+    client.post("/api/logout", headers={"X-CSRFToken": csrf})
+    logged = client.post("/api/login", json={"email": "favorito@teste.com", "password": "123456"}, headers={"X-CSRFToken": csrf})
+    assert logged.status_code == 200
+    listed = client.get("/api/my/favorites")
+    assert listed.json["productIds"] == ["santoku", "chef-8"]
+    removed = client.delete("/api/my/favorites/chef-8", headers={"X-CSRFToken": csrf})
+    assert removed.status_code == 200
+    assert removed.json["productIds"] == ["santoku"]
+
+
 def product_stock(client, product_id):
     products = client.get("/api/bootstrap").json["products"]
     return next(product["stock"] for product in products if product["id"] == product_id)

@@ -914,6 +914,25 @@ textarea:focus {
   gap: 14px;
 }
 
+.admin-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.admin-sidebar {
+  position: sticky;
+  top: 92px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(28, 36, 38, 0.07);
+}
+
 .report-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -940,9 +959,30 @@ textarea:focus {
 }
 
 .admin-tabs {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 8px;
+}
+
+.admin-tabs .tab-button {
+  justify-content: flex-start;
+  width: 100%;
+  border-radius: 8px;
+}
+
+.admin-layout.is-collapsed {
+  grid-template-columns: 78px minmax(0, 1fr);
+}
+
+.admin-layout.is-collapsed .admin-tabs .tab-button {
+  justify-content: center;
+  min-height: 38px;
+  padding-inline: 8px;
+}
+
+.admin-layout.is-collapsed .admin-tabs span {
+  max-width: 2ch;
+  overflow: hidden;
+  text-transform: uppercase;
 }
 
 .admin-tab-panel {
@@ -2133,6 +2173,7 @@ body[data-store-layout="compact"] .mini-review {
   .auth-portal,
   .admin-login-layout,
   .admin-shell,
+  .admin-layout,
   .form-grid,
   .checkout-form,
   .checkout-customer,
@@ -2143,6 +2184,14 @@ body[data-store-layout="compact"] .mini-review {
   }
 
   .admin-tabs {
+    position: static;
+  }
+
+  .admin-layout.is-collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-sidebar {
     position: static;
   }
 
