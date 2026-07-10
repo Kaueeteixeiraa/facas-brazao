@@ -186,6 +186,45 @@ function toggleTheme() {
   applyTheme();
 }
 
+let revealObserver;
+
+function observeReveal(root = document) {
+  const nodes = [
+    ...root.querySelectorAll(
+      "main > section, .product-card, .review-card, .policy-strip article, .assurance article, .process-grid article, .category-showcase button, .metric-card, .panel",
+    ),
+  ].filter((node) => !node.dataset.revealReady);
+  if (!nodes.length) return;
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduceMotion || !("IntersectionObserver" in window)) {
+    nodes.forEach((node) => {
+      node.dataset.revealReady = "1";
+      node.classList.add("reveal-item", "is-visible");
+    });
+    return;
+  }
+
+  revealObserver =
+    revealObserver ||
+    new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add("is-visible");
+          revealObserver.unobserve(entry.target);
+        });
+      },
+      { rootMargin: "0px 0px -48px 0px", threshold: 0.12 },
+    );
+
+  nodes.forEach((node) => {
+    node.dataset.revealReady = "1";
+    node.classList.add("reveal-item");
+    revealObserver.observe(node);
+  });
+}
+
 function isAdminPath() {
   return window.location.hash === "#admin" || window.location.pathname.startsWith("/admin");
 }
@@ -516,10 +555,13 @@ function renderProducts() {
       const soldOut = product.stock <= 0;
       const maxed = quantityInCart >= product.stock;
       const favorite = state.favorites.includes(product.id);
+      const displayPrice = product.promoPrice || product.price;
       return `
         <article class="product-card">
           <div class="product-media">
-            <img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy" />
+            <button class="product-media-link" type="button" data-view-product="${product.id}" aria-label="Ver detalhes de ${escapeHtml(product.name)}">
+              <img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy" />
+            </button>
             <span class="product-badge">${escapeHtml(product.badge || product.category)}</span>
             <button class="favorite-button ${favorite ? "is-active" : ""}" type="button" data-favorite-product="${product.id}" aria-label="${favorite ? "Remover dos favoritos" : "Favoritar produto"}">
               ${favorite ? "♥" : "♡"}
@@ -530,13 +572,12 @@ function renderProducts() {
               <h3>${escapeHtml(product.name)}</h3>
             </div>
             <span class="product-category">${escapeHtml(product.category)}</span>
-            <strong class="product-price">${money.format(product.promoPrice || product.price)}</strong>
+            <strong class="product-price">${money.format(displayPrice)}</strong>
             <span class="rating-line">${escapeHtml(reviewLabel(product))}</span>
             <div class="product-actions">
               <span class="stock ${product.stock <= 3 ? "low" : ""}">${product.stock} em estoque</span>
               <div class="inline-actions">
                 <button class="mini-button" type="button" data-view-product="${product.id}">Detalhes</button>
-                <a class="mini-button" href="/produto/${encodeURIComponent(product.slug || product.id)}">Link</a>
                 <button class="button button-primary" type="button" data-add-product="${product.id}" ${soldOut || maxed ? "disabled" : ""}>
                   ${soldOut ? "Esgotado" : maxed ? "No carrinho" : "Adicionar"}
                 </button>
@@ -547,6 +588,7 @@ function renderProducts() {
       `;
     })
     .join("");
+  observeReveal(productGrid);
 }
 
 function renderReviewShowcase() {
@@ -574,6 +616,7 @@ function renderReviewShowcase() {
         </article>
       </div>
     `;
+    observeReveal(reviewShowcase);
     return;
   }
 
@@ -601,6 +644,7 @@ function renderReviewShowcase() {
         .join("")}
     </div>
   `;
+  observeReveal(reviewShowcase);
 }
 
 function renderCart() {
@@ -849,12 +893,21 @@ function closeCheckout() {
   document.body.classList.remove("modal-open");
 }
 
+function stockStatus(product) {
+  if (product.stock <= 0) return { label: "Sob encomenda", className: "danger" };
+  if (product.stock <= 3) return { label: `Ultimas ${product.stock} unidades`, className: "warn" };
+  return { label: "Pronta entrega", className: "good" };
+}
+
 function openProductDetail(id) {
   const product = productById(id);
   if (!product || !productDetail || !productModal) return;
   state.selectedProductId = id;
   const soldOut = product.stock <= 0;
   const gallery = product.gallery?.length ? product.gallery : [product.image];
+  const displayPrice = product.promoPrice || product.price;
+  const hasPromo = Number(product.promoPrice || 0) > 0 && Number(product.promoPrice) < Number(product.price);
+  const stock = stockStatus(product);
   productDetail.innerHTML = `
     <div class="product-detail-layout">
       <div class="product-detail-media">
@@ -862,8 +915,8 @@ function openProductDetail(id) {
         <div class="gallery-strip">
           ${gallery
             .map(
-              (image) => `
-                <button type="button" data-gallery-image="${escapeHtml(image)}" aria-label="Ver foto de ${escapeHtml(product.name)}">
+              (image, index) => `
+                <button class="${index === 0 ? "is-active" : ""}" type="button" data-gallery-image="${escapeHtml(image)}" aria-label="Ver foto de ${escapeHtml(product.name)}">
                   <img src="${escapeHtml(image)}" alt="" loading="lazy" />
                 </button>
               `,
@@ -874,30 +927,32 @@ function openProductDetail(id) {
       <div class="product-detail-copy">
         <p class="eyebrow">${escapeHtml(product.badge || product.category)}</p>
         <h2 id="product-detail-title">${escapeHtml(product.name)}</h2>
-        <strong class="product-detail-price">${money.format(product.price)}</strong>
-        <p>${escapeHtml(product.description)}</p>
-        <span class="rating-line detail-rating">${escapeHtml(reviewLabel(product))}</span>
-        <ul class="meta-list">
-          <li>${escapeHtml(product.category)}</li>
-          <li>${escapeHtml(product.steel || "Aco selecionado")}</li>
-          <li>${escapeHtml(product.size || "Sob consulta")}</li>
-          <li>${escapeHtml(product.handleMaterial || "Cabo selecionado")}</li>
-          <li>${escapeHtml(product.weight || "Peso sob consulta")}</li>
-          <li>SKU ${escapeHtml(product.sku || product.id)}</li>
-          <li>${product.stock} em estoque</li>
-        </ul>
+        <div class="product-detail-status">
+          <span class="status-pill ${stock.className}">${escapeHtml(stock.label)}</span>
+          <span class="rating-line detail-rating">${escapeHtml(reviewLabel(product))}</span>
+        </div>
+        <div class="price-stack">
+          <strong class="product-detail-price">${money.format(displayPrice)}</strong>
+          ${hasPromo ? `<span>${money.format(product.price)}</span>` : ""}
+        </div>
+        <p class="product-detail-lead">${escapeHtml(product.description)}</p>
         <div class="product-spec-grid">
+          <article><span>Categoria</span><strong>${escapeHtml(product.category)}</strong></article>
+          <article><span>Estoque</span><strong>${product.stock} unidade${product.stock === 1 ? "" : "s"}</strong></article>
+          <article><span>Aco</span><strong>${escapeHtml(product.steel || "Selecionado")}</strong></article>
+          <article><span>Cabo</span><strong>${escapeHtml(product.handleMaterial || "Sob consulta")}</strong></article>
           <article><span>Lâmina</span><strong>${escapeHtml(product.bladeLength || product.size || "Sob consulta")}</strong></article>
           <article><span>Total</span><strong>${escapeHtml(product.totalLength || "Sob consulta")}</strong></article>
           <article><span>Bainha</span><strong>${escapeHtml(product.sheath || "Sob consulta")}</strong></article>
           <article><span>Prazo</span><strong>${escapeHtml(product.productionTime || "Pronta entrega")}</strong></article>
           <article><span>Envio</span><strong>${escapeHtml(product.shippingTime || "Envio sob consulta")}</strong></article>
-          <article><span>Garantia</span><strong>${escapeHtml(product.warranty || state.settings.warrantyPolicy || settingFallbacks.warrantyPolicy)}</strong></article>
+          <article><span>SKU</span><strong>${escapeHtml(product.sku || product.id)}</strong></article>
         </div>
         <div class="notice">
           <strong>Cuidados:</strong> ${escapeHtml(product.care || state.settings.carePolicy || settingFallbacks.carePolicy)}
+          <br /><strong>Garantia:</strong> ${escapeHtml(product.warranty || state.settings.warrantyPolicy || settingFallbacks.warrantyPolicy)}
         </div>
-        <div class="action-row">
+        <div class="action-row product-detail-actions">
           <button class="button button-primary" type="button" data-add-product="${product.id}" ${soldOut ? "disabled" : ""}>
             ${soldOut ? "Esgotado" : "Adicionar ao carrinho"}
           </button>
@@ -906,8 +961,8 @@ function openProductDetail(id) {
           </button>
           <a class="button button-whatsapp whatsapp-icon-link" href="${whatsappUrl(settingMessage("whatsappProductMessage", settingFallbacks.whatsappProductMessage, { produto: product.name }))}" rel="noopener" aria-label="Perguntar sobre ${escapeHtml(product.name)} no WhatsApp">
             <span class="whatsapp-mark" aria-hidden="true"></span>
+            WhatsApp
           </a>
-          <button class="button button-secondary" type="button" data-close-product>Continuar comprando</button>
         </div>
         <div class="review-list">
           <h3>Avaliações</h3>
@@ -1304,6 +1359,7 @@ function renderAdminShell() {
       </div>
     </div>
   `;
+  observeReveal(adminShell);
 }
 
 function renderAdminTab() {
@@ -2666,6 +2722,7 @@ async function loadBootstrap() {
   if (state.user?.role === "admin") await loadAdminData();
   renderClientPanel();
   renderAdminShell();
+  observeReveal();
   window.setTimeout(handleHashRoute, 0);
 }
 
@@ -3184,6 +3241,7 @@ document.addEventListener("click", async (event) => {
   if (galleryButton) {
     const mainImage = document.querySelector("[data-product-main-image]");
     if (mainImage) mainImage.src = galleryButton.dataset.galleryImage;
+    document.querySelectorAll("[data-gallery-image]").forEach((button) => button.classList.toggle("is-active", button === galleryButton));
     return;
   }
 
