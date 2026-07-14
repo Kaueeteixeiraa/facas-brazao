@@ -16,6 +16,7 @@
       content="Facas artesanais para churrasco, cozinha e campo com compra online e suporte pelo WhatsApp."
     />
     <meta data-meta="og:type" property="og:type" content="website" />
+    <meta data-meta="og:url" property="og:url" content="/" />
     <meta data-meta="twitter:card" name="twitter:card" content="summary_large_image" />
     <meta
       data-meta="twitter:title"
@@ -27,27 +28,30 @@
       name="twitter:description"
       content="Facas Brazão: facas artesanais, lâminas para churrasco, cozinha e campo com compra online."
     />
+    <link data-canonical rel="canonical" href="/" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header class="site-header">
       <a class="brand" href="#loja" aria-label="Ir para a loja">
-        <span class="brand-mark" aria-hidden="true">FB</span>
-        <span>
-          <strong data-setting="siteName">Facas Brazão</strong>
-          <small>Cutelaria e churrasco</small>
-        </span>
+        <img class="brand-logo-image" src="assets/logo-facas-brazao.png" alt="Facas Brazão" />
       </a>
 
-      <nav class="main-nav" aria-label="Navegação principal">
-        <button type="button" data-scroll-target="#loja">Loja</button>
+      <nav class="main-nav" aria-label="Navegacao principal">
+        <a href="/">Inicio</a>
+        <a href="/produtos">Facas</a>
+        <button type="button" data-category="kits">Kits</button>
+        <a href="/sob-encomenda">Sob encomenda</a>
+        <button type="button" data-scroll-target="#processo">Sobre</button>
         <button type="button" data-scroll-target="#contato">Contato</button>
       </nav>
 
       <div class="header-actions">
+        <button class="theme-toggle nav-menu-toggle" type="button" data-toggle-nav aria-label="Abrir menu">☰</button>
         <button class="account-pill" type="button" data-open-auth>
           <span data-user-label>Entrar</span>
         </button>
+        <button class="theme-toggle" type="button" data-open-favorites aria-label="Abrir favoritos">♡</button>
         <button class="theme-toggle" type="button" data-theme-toggle aria-label="Alternar tema escuro">
           <span class="theme-toggle-icon" aria-hidden="true"></span>
         </button>
@@ -77,6 +81,25 @@
       <div class="announcement-bar" data-setting="announcementText">
         Frete gratis em pedidos selecionados e atendimento pelo WhatsApp.
       </div>
+
+      <section class="category-showcase" aria-label="Categorias em destaque">
+        <button type="button" data-category="cozinha">
+          <span>Cozinha</span>
+          <strong>Chef, santoku e utilitarias</strong>
+        </button>
+        <button type="button" data-category="churrasco">
+          <span>Churrasco</span>
+          <strong>Picanheira, brisket e cortes grandes</strong>
+        </button>
+        <button type="button" data-category="campo">
+          <span>Campo</span>
+          <strong>Uso pesado e bainha sob medida</strong>
+        </button>
+        <button type="button" data-category="kits">
+          <span>Kits</span>
+          <strong>Presentes e conjuntos completos</strong>
+        </button>
+      </section>
 
       <section class="store-shell" id="loja" aria-labelledby="store-title">
         <div class="section-heading">
@@ -126,6 +149,79 @@
         </div>
 
         <div class="product-grid" id="productGrid" aria-live="polite"></div>
+      </section>
+
+      <section class="process-section" id="processo" aria-labelledby="process-title">
+        <div class="section-heading">
+          <p class="eyebrow">Como funciona</p>
+          <h2 id="process-title">Da escolha ao fio pronto</h2>
+          <p>Compra direta para pecas em estoque e conversa guiada quando a faca precisa nascer sob encomenda.</p>
+        </div>
+        <div class="process-grid">
+          <article><span>1</span><strong>Escolha a faca</strong><p>Filtre por uso, categoria e pronta entrega.</p></article>
+          <article><span>2</span><strong>Feche com seguranca</strong><p>Pedido com CEP, cupom e pagamento pelo Mercado Pago quando configurado.</p></article>
+          <article><span>3</span><strong>Acompanhe</strong><p>A loja atualiza status, envio e atendimento pelo WhatsApp.</p></article>
+        </div>
+      </section>
+
+      <section class="custom-order" id="sob-encomenda" aria-labelledby="custom-title">
+        <div class="section-heading">
+          <p class="eyebrow">Sob encomenda</p>
+          <h2 id="custom-title">Faca do seu jeito</h2>
+          <p>Informe uso, medida, cabo e prazo. O pedido entra no painel como orcamento para resposta da loja.</p>
+        </div>
+        <form class="form-grid panel" data-quote-form>
+          <label>
+            <span>Nome</span>
+            <input name="name" type="text" required />
+          </label>
+          <label>
+            <span>WhatsApp</span>
+            <input name="phone" type="tel" required />
+          </label>
+          <label>
+            <span>E-mail</span>
+            <input name="email" type="email" />
+          </label>
+          <label>
+            <span>Tipo de faca</span>
+            <input name="knifeType" type="text" placeholder="Chef, churrasco, campo..." required />
+          </label>
+          <label>
+            <span>Uso principal</span>
+            <input name="mainUse" type="text" placeholder="Churrasco, cozinha, presente..." />
+          </label>
+          <label>
+            <span>Medida desejada</span>
+            <input name="desiredSize" type="text" placeholder="Ex: 8 polegadas" />
+          </label>
+          <label>
+            <span>Aco</span>
+            <input name="steelType" type="text" placeholder="Carbono, inox..." />
+          </label>
+          <label>
+            <span>Cabo</span>
+            <input name="handleMaterial" type="text" placeholder="Madeira, micarta..." />
+          </label>
+          <label>
+            <span>Faixa de investimento</span>
+            <input name="budgetRange" type="text" placeholder="Ex: ate R$ 500" />
+          </label>
+          <label>
+            <span>Prazo desejado</span>
+            <input name="desiredDeadline" type="text" placeholder="Ex: presente em 30 dias" />
+          </label>
+          <label class="checkbox-field wide-field">
+            <input name="engraving" type="checkbox" />
+            <span>Quero gravacao personalizada</span>
+          </label>
+          <label class="wide-field">
+            <span>Detalhes</span>
+            <textarea name="notes" rows="4" placeholder="Descreva acabamento, bainha, gravacao, referencia e qualquer detalhe importante."></textarea>
+          </label>
+          <button class="button button-primary wide-field" type="submit">Solicitar orcamento</button>
+          <p class="form-status wide-field" role="status"></p>
+        </form>
       </section>
 
       <section class="admin-workspace" id="admin" aria-labelledby="admin-title">
@@ -201,6 +297,11 @@
         <button class="icon-button modal-close" type="button" data-close-checkout aria-label="Fechar checkout">×</button>
         <p class="eyebrow">Checkout</p>
         <h2 id="checkout-title">Finalizar pedido</h2>
+        <ol class="checkout-steps" aria-label="Etapas do checkout">
+          <li><span>1</span>Entrega</li>
+          <li><span>2</span>Pagamento</li>
+          <li><span>3</span>Confirmacao</li>
+        </ol>
         <form id="checkoutForm" class="checkout-form">
           <div class="checkout-customer wide-field" data-checkout-customer></div>
           <label>

@@ -10,6 +10,7 @@ const dateTime = new Intl.DateTimeFormat("pt-BR", {
 
 const state = {
   settings: {},
+  csrfToken: "",
   payment: {
     mercadoPagoConfigured: false,
     publicUrl: "",
@@ -35,14 +36,23 @@ const state = {
   selectedProductId: null,
   myOrders: [],
   adminTab: "dashboard",
+  adminCollapsed: localStorage.getItem("facas-brazao-admin-collapsed") === "1",
   authMode: "login",
   theme: localStorage.getItem("facas-brazao-theme") || "light",
   editingProductId: null,
+  editingCategoryId: null,
+  adminSearch: {
+    products: "",
+    customers: "",
+  },
+  activeSettingsTab: "store",
   admin: {
     summary: null,
     products: [],
+    categories: [],
     orders: [],
     customers: [],
+    quotes: [],
     coupons: [],
     reviews: [],
     reports: null,
@@ -176,23 +186,121 @@ function toggleTheme() {
   applyTheme();
 }
 
-function syncAdminRoute() {
-  document.body.classList.toggle("admin-route", window.location.hash === "#admin");
+let revealObserver;
+
+function observeReveal(root = document) {
+  const nodes = [
+    ...root.querySelectorAll(
+      "main > section, .product-card, .review-card, .policy-strip article, .assurance article, .process-grid article, .category-showcase button, .metric-card, .panel",
+    ),
+  ].filter((node) => !node.dataset.revealReady);
+  if (!nodes.length) return;
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduceMotion || !("IntersectionObserver" in window)) {
+    nodes.forEach((node) => {
+      node.dataset.revealReady = "1";
+      node.classList.add("reveal-item", "is-visible");
+    });
+    return;
+  }
+
+  revealObserver =
+    revealObserver ||
+    new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add("is-visible");
+          revealObserver.unobserve(entry.target);
+        });
+      },
+      { rootMargin: "0px 0px -48px 0px", threshold: 0.12 },
+    );
+
+  nodes.forEach((node) => {
+    node.dataset.revealReady = "1";
+    node.classList.add("reveal-item");
+    revealObserver.observe(node);
+  });
 }
 
-function openProductFromHash(hash = window.location.hash) {
-  if (!hash.startsWith("#produto=")) return false;
-  const key = decodeURIComponent(hash.split("=").slice(1).join("="));
+function isAdminPath() {
+  return window.location.hash === "#admin" || window.location.pathname.startsWith("/admin");
+}
+
+function syncAdminRoute() {
+  document.body.classList.toggle("admin-route", isAdminPath());
+}
+
+function updateRouteMeta() {
+  const baseUrl = (state.settings.publicUrl || window.location.origin).replace(/\/+$/, "");
+  const path = window.location.pathname || "/";
+  const url = `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  document.querySelector("[data-canonical]")?.setAttribute("href", url);
+  document.querySelector('[data-meta="og:url"]')?.setAttribute("content", url);
+}
+
+function openProductByKey(key) {
   const product = state.products.find((item) => item.id === key || item.slug === key);
   if (!product) return false;
   openProductDetail(product.id);
   return true;
 }
 
+function openProductFromHash(hash = window.location.hash) {
+  if (!hash.startsWith("#produto=")) return false;
+  return openProductByKey(decodeURIComponent(hash.split("=").slice(1).join("=")));
+}
+
+function handlePathRoute() {
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  if (!path.startsWith("/produto/")) closeProductDetail();
+  if (path === "/") return false;
+  const adminTabs = {
+    "/admin": "dashboard",
+    "/admin/produtos": "products",
+    "/admin/pedidos": "orders",
+    "/admin/orcamentos": "quotes",
+    "/admin/clientes": "customers",
+    "/admin/cupons": "coupons",
+    "/admin/avaliacoes": "reviews",
+    "/admin/configuracoes": "settings",
+  };
+  if (adminTabs[path]) {
+    state.adminTab = adminTabs[path];
+    renderAdminShell();
+    scrollToSection("#admin", { updateHistory: false });
+    return true;
+  }
+  if (path === "/produtos") return scrollToSection("#loja", { updateHistory: false });
+  if (path === "/sob-encomenda") return scrollToSection("#sob-encomenda", { updateHistory: false });
+  if (path === "/favoritos") {
+    state.filters.favoritesOnly = true;
+    if (favoritesOnlyInput) favoritesOnlyInput.checked = true;
+    renderProducts();
+    return scrollToSection("#loja", { updateHistory: false });
+  }
+  if (path === "/entrar" || path === "/minha-conta" || path === "/meus-pedidos") {
+    openAuthModal("login");
+    return true;
+  }
+  if (path === "/cadastro") {
+    openAuthModal("register");
+    return true;
+  }
+  if (path.startsWith("/produto/")) {
+    return openProductByKey(decodeURIComponent(path.split("/produto/")[1] || ""));
+  }
+  return false;
+}
+
 function handleHashRoute() {
   syncAdminRoute();
+  updateRouteMeta();
   if (openProductFromHash()) return;
-  if (["#loja", "#contato", "#admin"].includes(window.location.hash)) {
+  if (handlePathRoute()) return;
+  if (["#loja", "#contato", "#admin", "#processo", "#sob-encomenda"].includes(window.location.hash)) {
     scrollToSection(window.location.hash, { updateHistory: false });
   }
 }
@@ -227,20 +335,44 @@ function saveFavorites() {
   localStorage.setItem("facas-brazao-favorites", JSON.stringify(state.favorites));
 }
 
-function toggleFavorite(id) {
+async function syncFavoritesWithServer() {
+  if (!state.user || state.user.role === "admin") return;
+  const payload = await api("/api/my/favorites");
+  const merged = [...new Set([...(payload.productIds || []), ...state.favorites])].filter((id) => productById(id));
+  state.favorites = merged;
+  saveFavorites();
+  if (merged.length !== (payload.productIds || []).length) {
+    const saved = await api("/api/my/favorites", { method: "PUT", body: { productIds: merged } });
+    state.favorites = saved.productIds || merged;
+    saveFavorites();
+  }
+}
+
+async function toggleFavorite(id) {
   if (state.favorites.includes(id)) {
     state.favorites = state.favorites.filter((item) => item !== id);
+    if (state.user && state.user.role !== "admin") {
+      await api(`/api/my/favorites/${encodeURIComponent(id)}`, { method: "DELETE" });
+    }
   } else {
     state.favorites.push(id);
+    if (state.user && state.user.role !== "admin") {
+      await api(`/api/my/favorites/${encodeURIComponent(id)}`, { method: "POST" });
+    }
   }
   saveFavorites();
   renderProducts();
+  renderClientPanel();
 }
 
 async function api(path, options = {}) {
   const isFormData = options.body instanceof FormData;
+  const method = String(options.method || "GET").toUpperCase();
+  const csrfHeaders = method === "GET" ? {} : { "X-CSRFToken": state.csrfToken };
   const headers =
-    options.body && !isFormData ? { "Content-Type": "application/json", ...(options.headers || {}) } : options.headers;
+    options.body && !isFormData
+      ? { "Content-Type": "application/json", ...csrfHeaders, ...(options.headers || {}) }
+      : { ...csrfHeaders, ...(options.headers || {}) };
   const response = await fetch(path, {
     credentials: "same-origin",
     ...options,
@@ -319,6 +451,7 @@ function renderSettings() {
     node.textContent = state.settings[key] || settingFallbacks[key] || "";
   });
   updateWhatsappLinks();
+  updateRouteMeta();
   updateStructuredData();
 }
 
@@ -377,7 +510,7 @@ function updateStructuredData() {
           priceCurrency: "BRL",
           price: Number(product.price || 0).toFixed(2),
           availability: product.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
-          url: `${baseUrl}/#produto=${encodeURIComponent(product.slug || product.id)}`,
+          url: `${baseUrl}/produto/${encodeURIComponent(product.slug || product.id)}`,
         },
       },
     })),
@@ -431,12 +564,14 @@ function renderProducts() {
       const quantityInCart = state.cart[product.id] || 0;
       const soldOut = product.stock <= 0;
       const maxed = quantityInCart >= product.stock;
-      const featuredReview = product.reviewStats?.reviews?.[0];
       const favorite = state.favorites.includes(product.id);
+      const displayPrice = product.promoPrice || product.price;
       return `
         <article class="product-card">
           <div class="product-media">
-            <img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy" />
+            <button class="product-media-link" type="button" data-view-product="${product.id}" aria-label="Ver detalhes de ${escapeHtml(product.name)}">
+              <img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy" />
+            </button>
             <span class="product-badge">${escapeHtml(product.badge || product.category)}</span>
             <button class="favorite-button ${favorite ? "is-active" : ""}" type="button" data-favorite-product="${product.id}" aria-label="${favorite ? "Remover dos favoritos" : "Favoritar produto"}">
               ${favorite ? "♥" : "♡"}
@@ -445,22 +580,14 @@ function renderProducts() {
           <div class="product-body">
             <div class="product-title-row">
               <h3>${escapeHtml(product.name)}</h3>
-              <span class="product-price">${money.format(product.price)}</span>
             </div>
+            <span class="product-category">${escapeHtml(product.category)}</span>
+            <strong class="product-price">${money.format(displayPrice)}</strong>
             <span class="rating-line">${escapeHtml(reviewLabel(product))}</span>
-            <p>${escapeHtml(product.description)}</p>
-            <ul class="meta-list" aria-label="Especificações">
-              <li>${escapeHtml(product.steel || "Aço selecionado")}</li>
-              <li>${escapeHtml(product.size || "Sob consulta")}</li>
-              <li>${escapeHtml(product.handleMaterial || "Cabo selecionado")}</li>
-              <li>${escapeHtml(product.productionTime || "Pronta entrega")}</li>
-            </ul>
-            ${featuredReview ? `<blockquote class="mini-review">"${escapeHtml(featuredReview.comment)}"</blockquote>` : ""}
             <div class="product-actions">
               <span class="stock ${product.stock <= 3 ? "low" : ""}">${product.stock} em estoque</span>
               <div class="inline-actions">
                 <button class="mini-button" type="button" data-view-product="${product.id}">Detalhes</button>
-                <a class="mini-button" href="#produto=${encodeURIComponent(product.slug || product.id)}">Link</a>
                 <button class="button button-primary" type="button" data-add-product="${product.id}" ${soldOut || maxed ? "disabled" : ""}>
                   ${soldOut ? "Esgotado" : maxed ? "No carrinho" : "Adicionar"}
                 </button>
@@ -471,6 +598,7 @@ function renderProducts() {
       `;
     })
     .join("");
+  observeReveal(productGrid);
 }
 
 function renderReviewShowcase() {
@@ -498,6 +626,7 @@ function renderReviewShowcase() {
         </article>
       </div>
     `;
+    observeReveal(reviewShowcase);
     return;
   }
 
@@ -525,6 +654,7 @@ function renderReviewShowcase() {
         .join("")}
     </div>
   `;
+  observeReveal(reviewShowcase);
 }
 
 function renderCart() {
@@ -688,6 +818,21 @@ async function refreshCheckoutPricing() {
   renderCheckoutSummary();
 }
 
+async function fillAddressFromCep(value) {
+  const clean = String(value || "").replace(/\D/g, "");
+  const addressInput = document.querySelector('#checkoutForm input[name="address"]');
+  if (clean.length !== 8 || !addressInput || addressInput.value.trim()) return;
+  try {
+    const response = await fetch(`https://viacep.com.br/ws/${clean}/json/`);
+    const data = await response.json();
+    if (!data.erro) {
+      addressInput.value = [data.logradouro, data.bairro, data.localidade && `${data.localidade} - ${data.uf}`].filter(Boolean).join(", ");
+    }
+  } catch (_error) {
+    // CEP continua manual se o servico externo estiver indisponivel.
+  }
+}
+
 function clearCheckoutAdjustments() {
   state.checkout.cep = "";
   state.checkout.couponCode = "";
@@ -758,12 +903,21 @@ function closeCheckout() {
   document.body.classList.remove("modal-open");
 }
 
+function stockStatus(product) {
+  if (product.stock <= 0) return { label: "Sob encomenda", className: "danger" };
+  if (product.stock <= 3) return { label: `Ultimas ${product.stock} unidades`, className: "warn" };
+  return { label: "Pronta entrega", className: "good" };
+}
+
 function openProductDetail(id) {
   const product = productById(id);
   if (!product || !productDetail || !productModal) return;
   state.selectedProductId = id;
   const soldOut = product.stock <= 0;
   const gallery = product.gallery?.length ? product.gallery : [product.image];
+  const displayPrice = product.promoPrice || product.price;
+  const hasPromo = Number(product.promoPrice || 0) > 0 && Number(product.promoPrice) < Number(product.price);
+  const stock = stockStatus(product);
   productDetail.innerHTML = `
     <div class="product-detail-layout">
       <div class="product-detail-media">
@@ -771,8 +925,8 @@ function openProductDetail(id) {
         <div class="gallery-strip">
           ${gallery
             .map(
-              (image) => `
-                <button type="button" data-gallery-image="${escapeHtml(image)}" aria-label="Ver foto de ${escapeHtml(product.name)}">
+              (image, index) => `
+                <button class="${index === 0 ? "is-active" : ""}" type="button" data-gallery-image="${escapeHtml(image)}" aria-label="Ver foto de ${escapeHtml(product.name)}">
                   <img src="${escapeHtml(image)}" alt="" loading="lazy" />
                 </button>
               `,
@@ -783,30 +937,32 @@ function openProductDetail(id) {
       <div class="product-detail-copy">
         <p class="eyebrow">${escapeHtml(product.badge || product.category)}</p>
         <h2 id="product-detail-title">${escapeHtml(product.name)}</h2>
-        <strong class="product-detail-price">${money.format(product.price)}</strong>
-        <p>${escapeHtml(product.description)}</p>
-        <span class="rating-line detail-rating">${escapeHtml(reviewLabel(product))}</span>
-        <ul class="meta-list">
-          <li>${escapeHtml(product.category)}</li>
-          <li>${escapeHtml(product.steel || "Aco selecionado")}</li>
-          <li>${escapeHtml(product.size || "Sob consulta")}</li>
-          <li>${escapeHtml(product.handleMaterial || "Cabo selecionado")}</li>
-          <li>${escapeHtml(product.weight || "Peso sob consulta")}</li>
-          <li>SKU ${escapeHtml(product.sku || product.id)}</li>
-          <li>${product.stock} em estoque</li>
-        </ul>
+        <div class="product-detail-status">
+          <span class="status-pill ${stock.className}">${escapeHtml(stock.label)}</span>
+          <span class="rating-line detail-rating">${escapeHtml(reviewLabel(product))}</span>
+        </div>
+        <div class="price-stack">
+          <strong class="product-detail-price">${money.format(displayPrice)}</strong>
+          ${hasPromo ? `<span>${money.format(product.price)}</span>` : ""}
+        </div>
+        <p class="product-detail-lead">${escapeHtml(product.description)}</p>
         <div class="product-spec-grid">
+          <article><span>Categoria</span><strong>${escapeHtml(product.category)}</strong></article>
+          <article><span>Estoque</span><strong>${product.stock} unidade${product.stock === 1 ? "" : "s"}</strong></article>
+          <article><span>Aco</span><strong>${escapeHtml(product.steel || "Selecionado")}</strong></article>
+          <article><span>Cabo</span><strong>${escapeHtml(product.handleMaterial || "Sob consulta")}</strong></article>
           <article><span>Lâmina</span><strong>${escapeHtml(product.bladeLength || product.size || "Sob consulta")}</strong></article>
           <article><span>Total</span><strong>${escapeHtml(product.totalLength || "Sob consulta")}</strong></article>
           <article><span>Bainha</span><strong>${escapeHtml(product.sheath || "Sob consulta")}</strong></article>
           <article><span>Prazo</span><strong>${escapeHtml(product.productionTime || "Pronta entrega")}</strong></article>
           <article><span>Envio</span><strong>${escapeHtml(product.shippingTime || "Envio sob consulta")}</strong></article>
-          <article><span>Garantia</span><strong>${escapeHtml(product.warranty || state.settings.warrantyPolicy || settingFallbacks.warrantyPolicy)}</strong></article>
+          <article><span>SKU</span><strong>${escapeHtml(product.sku || product.id)}</strong></article>
         </div>
         <div class="notice">
           <strong>Cuidados:</strong> ${escapeHtml(product.care || state.settings.carePolicy || settingFallbacks.carePolicy)}
+          <br /><strong>Garantia:</strong> ${escapeHtml(product.warranty || state.settings.warrantyPolicy || settingFallbacks.warrantyPolicy)}
         </div>
-        <div class="action-row">
+        <div class="action-row product-detail-actions">
           <button class="button button-primary" type="button" data-add-product="${product.id}" ${soldOut ? "disabled" : ""}>
             ${soldOut ? "Esgotado" : "Adicionar ao carrinho"}
           </button>
@@ -815,8 +971,8 @@ function openProductDetail(id) {
           </button>
           <a class="button button-whatsapp whatsapp-icon-link" href="${whatsappUrl(settingMessage("whatsappProductMessage", settingFallbacks.whatsappProductMessage, { produto: product.name }))}" rel="noopener" aria-label="Perguntar sobre ${escapeHtml(product.name)} no WhatsApp">
             <span class="whatsapp-mark" aria-hidden="true"></span>
+            WhatsApp
           </a>
-          <button class="button button-secondary" type="button" data-close-product>Continuar comprando</button>
         </div>
         <div class="review-list">
           <h3>Avaliações</h3>
@@ -855,6 +1011,43 @@ function closeAuthModal() {
   document.body.classList.remove("modal-open");
 }
 
+function focusableNodes(root) {
+  return [...root.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(
+    (node) => !node.disabled && node.offsetParent !== null,
+  );
+}
+
+function openAdminOverlay({ title, body, type = "modal", size = "" }) {
+  closeAdminOverlay();
+  openAdminOverlay.lastFocus = document.activeElement;
+  const layer = document.createElement("div");
+  layer.className = `modal-backdrop admin-overlay is-open admin-${type}-layer ${size}`.trim();
+  layer.dataset.adminOverlay = type;
+  layer.setAttribute("aria-hidden", "false");
+  layer.innerHTML = `
+    <section class="admin-${type}" role="dialog" aria-modal="true" aria-labelledby="admin-overlay-title">
+      <div class="admin-overlay-head">
+        <h3 id="admin-overlay-title">${escapeHtml(title)}</h3>
+        <button class="icon-button" type="button" data-close-admin-overlay aria-label="Fechar">×</button>
+      </div>
+      <div class="admin-overlay-body">${body}</div>
+    </section>
+  `;
+  document.body.append(layer);
+  document.body.classList.add(type === "drawer" ? "drawer-open" : "modal-open");
+  const first = focusableNodes(layer)[0];
+  first?.focus();
+}
+
+function closeAdminOverlay() {
+  const layer = document.querySelector("[data-admin-overlay]");
+  if (!layer) return;
+  const type = layer.dataset.adminOverlay;
+  layer.remove();
+  document.body.classList.remove(type === "drawer" ? "drawer-open" : "modal-open");
+  openAdminOverlay.lastFocus?.focus?.();
+}
+
 function renderProductReviews(product) {
   const reviews = product.reviewStats?.reviews || [];
   if (!reviews.length) {
@@ -873,6 +1066,34 @@ function renderProductReviews(product) {
       `,
     )
     .join("");
+}
+
+function renderFavoritesList() {
+  const products = state.favorites.map((id) => productById(id)).filter(Boolean);
+  if (!products.length) return `<div class="empty-state">Nenhum favorito salvo ainda.</div>`;
+  return `
+    <div class="order-list">
+      ${products
+        .map(
+          (product) => `
+            <article class="order-card">
+              <header>
+                <div>
+                  <h4>${escapeHtml(product.name)}</h4>
+                  <p>${escapeHtml(product.category)} • ${money.format(product.promoPrice || product.price)}</p>
+                </div>
+                <button class="mini-button danger" type="button" data-favorite-product="${product.id}">Remover</button>
+              </header>
+              <div class="inline-actions">
+                <button class="mini-button" type="button" data-view-product="${product.id}">Detalhes</button>
+                <button class="mini-button" type="button" data-add-product="${product.id}" ${product.stock <= 0 ? "disabled" : ""}>Adicionar</button>
+              </div>
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
 }
 
 function renderClientPanel() {
@@ -959,6 +1180,16 @@ function renderClientPanel() {
     <div class="panel">
       <div class="panel-head">
         <div>
+          <h3>Favoritos</h3>
+          <p>Produtos salvos na sua conta.</p>
+        </div>
+      </div>
+      ${renderFavoritesList()}
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div>
           <h3>Meus pedidos</h3>
           <p>Pedidos feitos com este cadastro.</p>
         </div>
@@ -988,6 +1219,11 @@ function renderOrdersList(orders) {
               </header>
               <p>${order.items.map((item) => `${item.quantity}x ${escapeHtml(item.name)}`).join(" · ")}</p>
               <strong>${money.format(order.total)}</strong>
+              ${
+                ["Aguardando pagamento", "Rejeitado", "Cancelado"].includes(order.status) && /mercado/i.test(`${order.paymentMethod || ""} ${(order.payment || {}).provider || ""}`)
+                  ? `<button class="mini-button" type="button" data-pay-order="${order.id}">Pagar novamente</button>`
+                  : ""
+              }
               ${renderOrderTimeline(order)}
               ${renderReviewFormsForOrder(order)}
             </article>
@@ -1097,9 +1333,12 @@ function renderAdminShell() {
   const tabs = [
     ["dashboard", "Resumo"],
     ["products", "Produtos"],
+    ["categories", "Categorias"],
+    ["stock", "Estoque"],
     ["coupons", "Cupons"],
     ["reviews", "Avaliações"],
     ["orders", "Pedidos"],
+    ["quotes", "Orçamentos"],
     ["customers", "Clientes"],
     ["reports", "Relatórios"],
     ["cash", "Caixa"],
@@ -1109,21 +1348,28 @@ function renderAdminShell() {
   ];
 
   adminShell.innerHTML = `
-    <div class="admin-tabs" role="group" aria-label="Abas do painel admin">
-      ${tabs
-        .map(
-          ([id, label]) => `
-            <button class="tab-button ${state.adminTab === id ? "is-active" : ""}" type="button" data-admin-tab="${id}">
-              ${label}
-            </button>
-          `,
-        )
-        .join("")}
-    </div>
-    <div class="admin-tab-panel">
-      ${renderAdminTab()}
+    <div class="admin-layout ${state.adminCollapsed ? "is-collapsed" : ""}">
+      <aside class="admin-sidebar" aria-label="Menu administrativo">
+        <button class="mini-button" type="button" data-toggle-admin-nav>${state.adminCollapsed ? "Abrir" : "Recolher"}</button>
+        <div class="admin-tabs" role="group" aria-label="Abas do painel admin">
+          ${tabs
+            .map(
+              ([id, label]) => `
+                <button class="tab-button ${state.adminTab === id ? "is-active" : ""}" type="button" data-admin-tab="${id}" title="${label}">
+                  <span>${label}</span>
+                </button>
+              `,
+            )
+            .join("")}
+          <button class="tab-button danger" type="button" data-logout><span>Sair</span></button>
+        </div>
+      </aside>
+      <div class="admin-tab-panel">
+        ${renderAdminTab()}
+      </div>
     </div>
   `;
+  observeReveal(adminShell);
 }
 
 function renderAdminTab() {
@@ -1132,9 +1378,12 @@ function renderAdminTab() {
   }
 
   if (state.adminTab === "products") return renderAdminProducts();
+  if (state.adminTab === "categories") return renderAdminCategories();
+  if (state.adminTab === "stock") return renderAdminStock();
   if (state.adminTab === "coupons") return renderAdminCoupons();
   if (state.adminTab === "reviews") return renderAdminReviews();
   if (state.adminTab === "orders") return renderAdminOrders();
+  if (state.adminTab === "quotes") return renderAdminQuotes();
   if (state.adminTab === "customers") return renderAdminCustomers();
   if (state.adminTab === "reports") return renderAdminReports();
   if (state.adminTab === "cash") return renderAdminCash();
@@ -1184,6 +1433,10 @@ function renderAdminDashboard() {
         <span>Avaliações pendentes</span>
         <strong>${summary.pendingReviews || 0}</strong>
       </article>
+      <article class="metric-card">
+        <span>Orçamentos</span>
+        <strong>${summary.pendingQuotes || 0}</strong>
+      </article>
     </div>
 
     <div class="panel admin-control-center">
@@ -1196,6 +1449,7 @@ function renderAdminDashboard() {
       <div class="control-actions">
         <button class="mini-button" type="button" data-admin-tab="products">Produtos e fotos</button>
         <button class="mini-button" type="button" data-admin-tab="orders">Pedidos e entregas</button>
+        <button class="mini-button" type="button" data-admin-tab="quotes">Orçamentos</button>
         <button class="mini-button" type="button" data-admin-tab="customers">Clientes e relatórios</button>
         <button class="mini-button" type="button" data-admin-tab="reports">Relatórios completos</button>
         <button class="mini-button" type="button" data-admin-tab="cash">Caixa</button>
@@ -1260,72 +1514,76 @@ function renderAdminDashboard() {
   `;
 }
 
-function renderAdminProducts() {
-  const editing = state.admin.products.find((product) => product.id === state.editingProductId);
+function adminPageHead(title, subtitle, action = "") {
   return `
-    <div class="panel">
-      <div class="panel-head">
-        <div>
-          <h3>${editing ? "Editar produto" : "Cadastrar faca"}</h3>
-          <p>Produto salvo aparece na loja assim que estiver ativo.</p>
-        </div>
-        ${editing ? `<button class="mini-button" type="button" data-new-product>Novo produto</button>` : ""}
+    <div class="panel admin-page-head">
+      <div>
+        <h3>${escapeHtml(title)}</h3>
+        <p>${escapeHtml(subtitle)}</p>
       </div>
-      <form class="form-grid" data-product-form>
-        ${productFormFields(editing)}
-        <button class="button button-primary wide-field" type="submit">${editing ? "Salvar alterações" : "Cadastrar produto"}</button>
-        <p class="form-status wide-field" role="status"></p>
-      </form>
+      ${action}
     </div>
+  `;
+}
 
+function renderAdminProductsList() {
+  const search = state.adminSearch.products.toLowerCase();
+  const products = state.admin.products.filter((product) =>
+    [product.name, product.sku, product.category].join(" ").toLowerCase().includes(search),
+  );
+  return `
+    ${adminPageHead(
+      "Produtos",
+      `${state.admin.products.length} produto(s), ${state.admin.products.filter((item) => item.active).length} ativo(s).`,
+      `<button class="button button-primary" type="button" data-open-product-form>Adicionar produto</button>`,
+    )}
+    <div class="panel admin-toolbar">
+      <label class="search-field">
+        <span>Buscar</span>
+        <input type="search" value="${escapeHtml(state.adminSearch.products)}" placeholder="Nome, SKU ou categoria" data-admin-product-search />
+      </label>
+    </div>
     <div class="table-card">
       <table>
         <thead>
-          <tr>
-            <th>Produto</th>
-            <th>SKU</th>
-            <th>Categoria</th>
-            <th>Preço</th>
-            <th>Custo</th>
-            <th>Estoque</th>
-            <th>Status</th>
-            <th>Ações</th>
-          </tr>
+          <tr><th>Produto</th><th>Categoria</th><th>Preço</th><th>Estoque</th><th>Status</th><th>Ações</th></tr>
         </thead>
         <tbody>
-          ${state.admin.products
-            .map(
-              (product) => `
-                <tr>
-                  <td>
-                    <div class="admin-product-preview">
-                      <img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}" />
-                      <div>
-                        <strong>${escapeHtml(product.name)}</strong><br />
-                        <span class="muted">${escapeHtml(product.steel || "")}</span>
+          ${
+            products
+              .map(
+                (product) => `
+                  <tr>
+                    <td>
+                      <button class="admin-product-preview as-button" type="button" data-view-admin-product="${product.id}">
+                        <img src="${escapeHtml(product.image)}" alt="" />
+                        <span><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.sku || product.steel || "")}</small></span>
+                      </button>
+                    </td>
+                    <td>${escapeHtml(product.category)}</td>
+                    <td>${money.format(product.price)}${product.promoPrice ? `<br /><span class="muted">${money.format(product.promoPrice)}</span>` : ""}</td>
+                    <td><span class="status-pill ${product.stock <= Number(product.minStock || 3) ? "warn" : "good"}">${product.stock}</span></td>
+                    <td><span class="status-pill ${product.active ? "good" : "danger"}">${product.active ? "Ativo" : "Inativo"}</span></td>
+                    <td>
+                      <div class="inline-actions">
+                        <button class="mini-button" type="button" data-view-admin-product="${product.id}">Visualizar</button>
+                        <button class="mini-button" type="button" data-edit-product="${product.id}">Editar</button>
+                        <button class="mini-button danger" type="button" data-disable-product="${product.id}">Excluir</button>
                       </div>
-                    </div>
-                  </td>
-                  <td>${escapeHtml(product.sku || "")}</td>
-                  <td>${escapeHtml(product.category)}</td>
-                  <td>${money.format(product.price)}</td>
-                  <td>${money.format(product.cost || 0)}<br /><span class="muted">Margem ${product.price ? (((product.price - Number(product.cost || 0)) / product.price) * 100).toFixed(1) : "0.0"}%</span></td>
-                  <td>${product.stock}</td>
-                  <td><span class="status-pill ${product.active ? "good" : "danger"}">${product.active ? "Ativo" : "Inativo"}</span></td>
-                  <td>
-                    <div class="inline-actions">
-                      <button class="mini-button" type="button" data-edit-product="${product.id}">Editar</button>
-                      <button class="mini-button danger" type="button" data-disable-product="${product.id}">Desativar</button>
-                    </div>
-                  </td>
-                </tr>
-              `,
-            )
-            .join("")}
+                    </td>
+                  </tr>
+                `,
+              )
+              .join("") || `<tr><td colspan="6">Nenhum produto encontrado.</td></tr>`
+          }
         </tbody>
       </table>
     </div>
   `;
+}
+
+function renderAdminProducts() {
+  return renderAdminProductsList();
 }
 
 function productFormFields(product = {}) {
@@ -1339,6 +1597,10 @@ function productFormFields(product = {}) {
       <input name="sku" type="text" value="${escapeHtml(product.sku || "")}" placeholder="CHEF-8-1070" />
     </label>
     <label>
+      <span>Slug</span>
+      <input name="slug" type="text" value="${escapeHtml(product.slug || "")}" placeholder="chef-8-forjada" />
+    </label>
+    <label>
       <span>Categoria</span>
       <select name="category" required>
         ${["cozinha", "churrasco", "campo", "kits"]
@@ -1349,6 +1611,10 @@ function productFormFields(product = {}) {
     <label>
       <span>Preço</span>
       <input name="price" type="number" min="0" step="0.01" value="${product.price ?? ""}" required />
+    </label>
+    <label>
+      <span>Preço promocional</span>
+      <input name="promoPrice" type="number" min="0" step="0.01" value="${product.promoPrice ?? 0}" />
     </label>
     <label>
       <span>Custo</span>
@@ -1434,6 +1700,193 @@ function productFormFields(product = {}) {
       <span>Cuidados de uso</span>
       <textarea name="care" rows="3">${escapeHtml(product.care || "")}</textarea>
     </label>
+  `;
+}
+
+function openProductForm(id = "") {
+  const product = state.admin.products.find((item) => item.id === id) || {};
+  state.editingProductId = product.id || null;
+  openAdminOverlay({
+    title: product.id ? "Editar produto" : "Adicionar produto",
+    size: "large",
+    body: `
+      <form class="form-grid admin-modal-form" data-product-form>
+        ${productFormFields(product)}
+        <div class="admin-modal-actions wide-field">
+          <button class="button button-secondary" type="button" data-close-admin-overlay>Cancelar</button>
+          <button class="button button-primary" type="submit">${product.id ? "Salvar alterações" : "Salvar"}</button>
+        </div>
+        <p class="form-status wide-field" role="status"></p>
+      </form>
+    `,
+  });
+}
+
+function openAdminProductView(id) {
+  const product = state.admin.products.find((item) => item.id === id);
+  if (!product) return;
+  const gallery = product.gallery?.length ? product.gallery : [product.image];
+  openAdminOverlay({
+    title: "Visualizar produto",
+    size: "large",
+    body: `
+      <div class="admin-detail-grid">
+        <div>
+          <img class="admin-detail-image" src="${escapeHtml(gallery[0])}" alt="${escapeHtml(product.name)}" />
+          <div class="gallery-strip">
+            ${gallery.map((image) => `<img src="${escapeHtml(image)}" alt="" loading="lazy" />`).join("")}
+          </div>
+        </div>
+        <div class="admin-detail-copy">
+          <p class="eyebrow">${escapeHtml(product.category)}</p>
+          <h2>${escapeHtml(product.name)}</h2>
+          <strong>${money.format(product.price)}</strong>
+          ${product.promoPrice ? `<p>Promoção: ${money.format(product.promoPrice)}</p>` : ""}
+          <p>${escapeHtml(product.description || "")}</p>
+          <div class="product-spec-grid">
+            <article><span>Estoque</span><strong>${product.stock}</strong></article>
+            <article><span>Situação</span><strong>${product.active ? "Ativo" : "Inativo"}</strong></article>
+            <article><span>Aço</span><strong>${escapeHtml(product.steel || "-")}</strong></article>
+            <article><span>Cabo</span><strong>${escapeHtml(product.handleMaterial || "-")}</strong></article>
+            <article><span>Criado</span><strong>${product.createdAt ? dateTime.format(new Date(product.createdAt)) : "-"}</strong></article>
+            <article><span>Atualizado</span><strong>${product.updatedAt ? dateTime.format(new Date(product.updatedAt)) : "-"}</strong></article>
+          </div>
+          <div class="admin-modal-actions">
+            <button class="button button-secondary" type="button" data-close-admin-overlay>Fechar</button>
+            <button class="button button-primary" type="button" data-edit-product="${product.id}">Editar</button>
+          </div>
+        </div>
+      </div>
+    `,
+  });
+}
+
+function openDeleteProductConfirm(id) {
+  const product = state.admin.products.find((item) => item.id === id);
+  if (!product) return;
+  openAdminOverlay({
+    title: "Excluir produto",
+    size: "small",
+    body: `
+      <p><strong>${escapeHtml(product.name)}</strong></p>
+      <p>Esta ação não poderá ser desfeita. O produto será removido da loja pública.</p>
+      <div class="admin-modal-actions">
+        <button class="button button-secondary" type="button" data-close-admin-overlay>Cancelar</button>
+        <button class="button button-danger" type="button" data-confirm-disable-product="${product.id}">Excluir produto</button>
+      </div>
+    `,
+  });
+}
+
+function renderAdminCategories() {
+  return `
+    ${adminPageHead(
+      "Categorias",
+      "Organize o catálogo e veja quantos produtos existem em cada grupo.",
+      `<button class="button button-primary" type="button" data-open-category-form>Nova categoria</button>`,
+    )}
+    <div class="table-card">
+      <table>
+        <thead><tr><th>Categoria</th><th>Slug</th><th>Produtos</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody>
+          ${
+            state.admin.categories
+              .map(
+                (category) => `
+                  <tr>
+                    <td><strong>${escapeHtml(category.name)}</strong></td>
+                    <td>${escapeHtml(category.slug)}</td>
+                    <td>${category.productCount || 0}</td>
+                    <td><span class="status-pill ${category.active ? "good" : "danger"}">${category.active ? "Ativa" : "Inativa"}</span></td>
+                    <td>
+                      <div class="inline-actions">
+                        <button class="mini-button" type="button" data-edit-category="${category.id}">Editar</button>
+                        <button class="mini-button danger" type="button" data-delete-category="${category.id}">Excluir</button>
+                      </div>
+                    </td>
+                  </tr>
+                `,
+              )
+              .join("") || `<tr><td colspan="5">Nenhuma categoria cadastrada.</td></tr>`
+          }
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function openCategoryForm(id = "") {
+  const category = state.admin.categories.find((item) => item.id === id) || {};
+  state.editingCategoryId = category.id || null;
+  openAdminOverlay({
+    title: category.id ? "Editar categoria" : "Nova categoria",
+    size: "small",
+    body: `
+      <form class="form-grid admin-modal-form" data-category-form>
+        <label class="wide-field">
+          <span>Nome</span>
+          <input name="name" type="text" value="${escapeHtml(category.name || "")}" required />
+        </label>
+        <label class="wide-field">
+          <span>Slug</span>
+          <input name="slug" type="text" value="${escapeHtml(category.slug || "")}" ${category.id ? "disabled" : ""} />
+        </label>
+        <label class="checkbox-field wide-field">
+          <input name="active" type="checkbox" ${category.active !== false ? "checked" : ""} />
+          <span>Categoria ativa</span>
+        </label>
+        <div class="admin-modal-actions wide-field">
+          <button class="button button-secondary" type="button" data-close-admin-overlay>Cancelar</button>
+          <button class="button button-primary" type="submit">Salvar</button>
+        </div>
+        <p class="form-status wide-field" role="status"></p>
+      </form>
+    `,
+  });
+}
+
+function openDeleteCategoryConfirm(id) {
+  const category = state.admin.categories.find((item) => item.id === id);
+  if (!category) return;
+  openAdminOverlay({
+    title: "Excluir categoria",
+    size: "small",
+    body: `
+      <p><strong>${escapeHtml(category.name)}</strong></p>
+      <p>Confirme somente se não houver produtos vinculados.</p>
+      <div class="admin-modal-actions">
+        <button class="button button-secondary" type="button" data-close-admin-overlay>Cancelar</button>
+        <button class="button button-danger" type="button" data-confirm-delete-category="${category.id}">Excluir categoria</button>
+      </div>
+    `,
+  });
+}
+
+function renderAdminStock() {
+  const products = state.admin.products.slice().sort((a, b) => a.stock - b.stock);
+  return `
+    ${adminPageHead("Estoque", "Acompanhe pronta entrega, estoque mínimo e reposição.", "")}
+    <div class="table-card">
+      <table>
+        <thead><tr><th>Produto</th><th>Categoria</th><th>Estoque</th><th>Mínimo</th><th>Situação</th><th>Ação</th></tr></thead>
+        <tbody>
+          ${products
+            .map(
+              (product) => `
+                <tr>
+                  <td><strong>${escapeHtml(product.name)}</strong></td>
+                  <td>${escapeHtml(product.category)}</td>
+                  <td>${product.stock}</td>
+                  <td>${product.minStock || 3}</td>
+                  <td><span class="status-pill ${product.stock <= Number(product.minStock || 3) ? "warn" : "good"}">${product.stock <= Number(product.minStock || 3) ? "Baixo" : "OK"}</span></td>
+                  <td><button class="mini-button" type="button" data-edit-product="${product.id}">Editar estoque</button></td>
+                </tr>
+              `,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -1566,76 +2019,28 @@ function whatsappOrderLink(order) {
   return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
 }
 
-function renderAdminOrders() {
-  if (!state.admin.orders.length) {
-    return `<div class="empty-state">Nenhum pedido registrado ainda.</div>`;
-  }
-
+function renderAdminOrdersList() {
+  if (!state.admin.orders.length) return `<div class="empty-state">Nenhum pedido registrado ainda.</div>`;
   return `
-    <div class="panel">
-      <div class="panel-head">
-        <div>
-          <h3>Pedidos da loja</h3>
-          <p>Altere o status conforme a produção e entrega avançam.</p>
-        </div>
-        <a class="button button-secondary" href="/api/admin/reports.csv" download>Exportar CSV</a>
-      </div>
-    </div>
+    ${adminPageHead(
+      "Pedidos",
+      "Lista limpa de pedidos. Abra um pedido para ver produtos, cliente, endereço e histórico.",
+      `<a class="button button-secondary" href="/api/admin/reports.csv" download>Exportar CSV</a>`,
+    )}
     <div class="table-card">
       <table>
-        <thead>
-          <tr>
-            <th>Pedido</th>
-            <th>Cliente</th>
-            <th>Itens</th>
-            <th>Total</th>
-            <th>Status</th>
-            <th>Entrega</th>
-          </tr>
-        </thead>
+        <thead><tr><th>Pedido</th><th>Cliente</th><th>Total</th><th>Status</th><th>Data</th><th>Ação</th></tr></thead>
         <tbody>
           ${state.admin.orders
             .map(
               (order) => `
                 <tr>
-                  <td>
-                    <strong>${escapeHtml(order.id)}</strong><br />
-                    <span class="muted">${dateTime.format(new Date(order.createdAt))}</span>
-                  </td>
-                  <td>
-                    <strong>${escapeHtml(order.customerName)}</strong><br />
-                    ${escapeHtml(order.customerEmail)}<br />
-                    ${escapeHtml(order.customerPhone || "")}
-                  </td>
-                  <td>${order.items.map((item) => `${item.quantity}x ${escapeHtml(item.name)}`).join("<br />")}</td>
-                  <td>
-                    ${money.format(order.total)}<br />
-                    <span class="muted">${escapeHtml(order.paymentMethod)}</span>
-                    ${order.payment?.paymentId ? `<br /><span class="muted">PG ${escapeHtml(order.payment.paymentId)}</span>` : ""}
-                  </td>
-                  <td>
-                    <select data-order-status="${escapeHtml(order.id)}">
-                      ${[
-                        "Aguardando pagamento",
-                        "Pago",
-                        "Recebido",
-                        "Em produção",
-                        "Pronto para envio",
-                        "Enviado",
-                        "Entregue",
-                        "Pagamento recusado",
-                        "Cancelado",
-                      ]
-                        .map((status) => `<option value="${status}" ${order.status === status ? "selected" : ""}>${status}</option>`)
-                        .join("")}
-                    </select>
-                  </td>
-                  <td>
-                    ${order.cep ? `<strong>CEP ${escapeHtml(order.cep)}</strong><br />` : ""}
-                    ${escapeHtml(order.address)}${order.notes ? `<br /><span class="muted">${escapeHtml(order.notes)}</span>` : ""}
-                    ${renderOrderTimeline(order)}
-                    ${String(order.customerPhone || "").replace(/\D/g, "").length >= 10 ? `<br /><a class="mini-button" href="${whatsappOrderLink(order)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
-                  </td>
+                  <td><button class="link-button" type="button" data-view-order="${order.id}"><strong>${escapeHtml(order.id)}</strong></button></td>
+                  <td>${escapeHtml(order.customerName)}<br /><span class="muted">${escapeHtml(order.customerEmail)}</span></td>
+                  <td>${money.format(order.total)}<br /><span class="muted">${escapeHtml(order.paymentMethod)}</span></td>
+                  <td><span class="status-pill ${order.status === "Cancelado" ? "danger" : order.status === "Pago" ? "good" : "warn"}">${escapeHtml(order.status)}</span></td>
+                  <td>${dateTime.format(new Date(order.createdAt))}</td>
+                  <td><button class="mini-button" type="button" data-view-order="${order.id}">Abrir</button></td>
                 </tr>
               `,
             )
@@ -1646,45 +2051,79 @@ function renderAdminOrders() {
   `;
 }
 
-function renderAdminCustomers() {
-  if (!state.admin.customers.length) {
-    return `<div class="empty-state">Nenhum cliente cadastrado ainda.</div>`;
-  }
-
-  return `
-    <div class="panel">
-      <div class="panel-head">
-        <div>
-          <h3>Relatório de clientes</h3>
-          <p>Veja quem comprou, quantos pedidos fez e quanto gastou.</p>
+function openOrderDrawer(id) {
+  const order = state.admin.orders.find((item) => item.id === id);
+  if (!order) return;
+  const statuses = ["Novo", "Aguardando pagamento", "Pago", "Em produção", "Em preparação", "Enviado", "Concluído", "Cancelado"];
+  openAdminOverlay({
+    type: "drawer",
+    title: `Pedido ${order.id}`,
+    body: `
+      <div class="order-drawer-content">
+        <div class="admin-detail-section">
+          <span class="status-pill warn">${escapeHtml(order.status)}</span>
+          <h3>${escapeHtml(order.customerName)}</h3>
+          <p>${escapeHtml(order.customerEmail)}<br />${escapeHtml(order.customerPhone || "")}</p>
         </div>
-        <a class="button button-secondary" href="/api/admin/reports.csv" download>Exportar pedidos CSV</a>
+        <label>
+          <span>Situação</span>
+          <select data-order-status="${escapeHtml(order.id)}">
+            ${statuses.map((status) => `<option value="${status}" ${order.status === status ? "selected" : ""}>${status}</option>`).join("")}
+          </select>
+        </label>
+        <div class="admin-detail-section">
+          <h4>Produtos</h4>
+          ${order.items.map((item) => `<p>${item.quantity}x ${escapeHtml(item.name)} <strong>${money.format(item.price * item.quantity)}</strong></p>`).join("")}
+        </div>
+        <div class="product-spec-grid">
+          <article><span>Subtotal</span><strong>${money.format(order.subtotal)}</strong></article>
+          <article><span>Frete</span><strong>${money.format(order.shipping)}</strong></article>
+          <article><span>Desconto</span><strong>${money.format(order.discount || 0)}</strong></article>
+          <article><span>Total</span><strong>${money.format(order.total)}</strong></article>
+        </div>
+        <div class="admin-detail-section">
+          <h4>Entrega e observações</h4>
+          <p>${order.cep ? `CEP ${escapeHtml(order.cep)}<br />` : ""}${escapeHtml(order.address || "")}</p>
+          ${order.notes ? `<p>${escapeHtml(order.notes)}</p>` : ""}
+        </div>
+        <div class="admin-detail-section">
+          <h4>Histórico</h4>
+          ${renderOrderTimeline(order)}
+        </div>
+        ${String(order.customerPhone || "").replace(/\D/g, "").length >= 10 ? `<a class="button button-secondary" href="${whatsappOrderLink(order)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
       </div>
-    </div>
+    `,
+  });
+}
+
+function renderAdminOrders() {
+  return renderAdminOrdersList();
+}
+
+function whatsappQuoteLink(quote) {
+  const phone = normalizeBrazilPhone(quote.customerPhone);
+  const message = `Olá, ${quote.customerName}. Aqui é da Facas Brazão. Recebemos seu orçamento ${quote.id} para ${quote.knifeType}.`;
+  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+}
+
+function renderAdminQuotes() {
+  if (!state.admin.quotes.length) return `<div class="empty-state">Nenhum orçamento recebido ainda.</div>`;
+  return `
+    ${adminPageHead("Orçamentos", "Pedidos de faca sob encomenda enviados pela loja.", "")}
     <div class="table-card">
       <table>
-        <thead>
-          <tr>
-            <th>Cliente</th>
-            <th>Contato</th>
-            <th>Pedidos</th>
-            <th>Total gasto</th>
-            <th>Último pedido</th>
-          </tr>
-        </thead>
+        <thead><tr><th>Orçamento</th><th>Cliente</th><th>Faca</th><th>Prazo</th><th>Status</th><th>Ação</th></tr></thead>
         <tbody>
-          ${state.admin.customers
+          ${state.admin.quotes
             .map(
-              (customer) => `
+              (quote) => `
                 <tr>
-                  <td>
-                    <strong>${escapeHtml(customer.name)}</strong><br />
-                    <span class="muted">Desde ${dateTime.format(new Date(customer.createdAt))}</span>
-                  </td>
-                  <td>${escapeHtml(customer.email)}<br />${escapeHtml(customer.phone)}</td>
-                  <td>${customer.orders}</td>
-                  <td>${money.format(customer.totalSpent)}</td>
-                  <td>${customer.lastOrderAt ? dateTime.format(new Date(customer.lastOrderAt)) : "Sem pedidos"}</td>
+                  <td><button class="link-button" type="button" data-view-quote="${quote.id}"><strong>${escapeHtml(quote.id)}</strong></button><br /><span class="muted">${dateTime.format(new Date(quote.createdAt))}</span></td>
+                  <td>${escapeHtml(quote.customerName)}<br /><span class="muted">${escapeHtml(quote.customerPhone)}</span></td>
+                  <td>${escapeHtml(quote.knifeType)}<br /><span class="muted">${escapeHtml(quote.budgetRange || "Sem faixa definida")}</span></td>
+                  <td>${escapeHtml(quote.desiredDeadline || "-")}</td>
+                  <td><span class="status-pill ${quote.status === "Aprovado" ? "good" : quote.status === "Recusado" ? "danger" : "warn"}">${escapeHtml(quote.status)}</span></td>
+                  <td><button class="mini-button" type="button" data-view-quote="${quote.id}">Abrir</button></td>
                 </tr>
               `,
             )
@@ -1693,6 +2132,134 @@ function renderAdminCustomers() {
       </table>
     </div>
   `;
+}
+
+function openQuoteDrawer(id) {
+  const quote = state.admin.quotes.find((item) => item.id === id);
+  if (!quote) return;
+  const statuses = ["Novo", "Em análise", "Aguardando cliente", "Aprovado", "Recusado", "Convertido em pedido"];
+  openAdminOverlay({
+    type: "drawer",
+    title: `Orçamento ${quote.id}`,
+    body: `
+      <form class="order-drawer-content" data-quote-update-form data-quote-id="${quote.id}">
+        <div class="admin-detail-section">
+          <span class="status-pill warn">${escapeHtml(quote.status)}</span>
+          <h3>${escapeHtml(quote.customerName)}</h3>
+          <p>${escapeHtml(quote.customerEmail || "")}<br />${escapeHtml(quote.customerPhone)}</p>
+        </div>
+        <div class="admin-detail-section">
+          <h4>Pedido</h4>
+          <p><strong>${escapeHtml(quote.knifeType)}</strong></p>
+          <p>${escapeHtml([quote.mainUse, quote.desiredSize, quote.steelType, quote.handleMaterial].filter(Boolean).join(" • "))}</p>
+          ${quote.engraving ? `<p>Gravação: ${escapeHtml(quote.engravingText || "sim")}</p>` : ""}
+          ${quote.notes ? `<p>${escapeHtml(quote.notes)}</p>` : ""}
+        </div>
+        <label>
+          <span>Status</span>
+          <select name="status">
+            ${statuses.map((status) => `<option value="${status}" ${quote.status === status ? "selected" : ""}>${status}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>Valor estimado</span>
+          <input name="estimatedValue" type="number" min="0" step="0.01" value="${quote.estimatedValue || ""}" />
+        </label>
+        <label>
+          <span>Prazo estimado</span>
+          <input name="estimatedDeadline" type="text" value="${escapeHtml(quote.estimatedDeadline || "")}" />
+        </label>
+        <label>
+          <span>Resposta ao cliente</span>
+          <textarea name="adminResponse" rows="4">${escapeHtml(quote.adminResponse || "")}</textarea>
+        </label>
+        <div class="admin-modal-actions">
+          ${String(quote.customerPhone || "").replace(/\D/g, "").length >= 10 ? `<a class="button button-secondary" href="${whatsappQuoteLink(quote)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
+          <button class="button button-primary" type="submit">Salvar orçamento</button>
+        </div>
+        <p class="form-status" role="status"></p>
+      </form>
+    `,
+  });
+}
+
+function renderAdminCustomersList() {
+  const search = state.adminSearch.customers.toLowerCase();
+  const customers = state.admin.customers.filter((customer) =>
+    [customer.name, customer.email, customer.phone].join(" ").toLowerCase().includes(search),
+  );
+  if (!state.admin.customers.length) return `<div class="empty-state">Nenhum cliente cadastrado ainda.</div>`;
+  return `
+    ${adminPageHead("Clientes", "Busque clientes e abra os detalhes para ver histórico de pedidos.", `<a class="button button-secondary" href="/api/admin/reports.csv?type=customers" download>Exportar CSV</a>`)}
+    <div class="panel admin-toolbar">
+      <label class="search-field">
+        <span>Buscar</span>
+        <input type="search" value="${escapeHtml(state.adminSearch.customers)}" placeholder="Nome, telefone ou e-mail" data-admin-customer-search />
+      </label>
+    </div>
+    <div class="table-card">
+      <table>
+        <thead><tr><th>Cliente</th><th>Contato</th><th>Pedidos</th><th>Total comprado</th><th>Ação</th></tr></thead>
+        <tbody>
+          ${customers
+            .map(
+              (customer) => `
+                <tr>
+                  <td><strong>${escapeHtml(customer.name)}</strong><br /><span class="muted">Desde ${dateTime.format(new Date(customer.createdAt))}</span></td>
+                  <td>${escapeHtml(customer.email)}<br />${escapeHtml(customer.phone || "")}</td>
+                  <td>${customer.orders}</td>
+                  <td>${money.format(customer.totalSpent)}</td>
+                  <td><button class="mini-button" type="button" data-view-customer="${customer.id}">Abrir</button></td>
+                </tr>
+              `,
+            )
+            .join("") || `<tr><td colspan="5">Nenhum cliente encontrado.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function openCustomerDrawer(id) {
+  const customer = state.admin.customers.find((item) => item.id === id);
+  if (!customer) return;
+  const orders = state.admin.orders.filter((order) => order.customerId === id || order.customerEmail === customer.email);
+  openAdminOverlay({
+    type: "drawer",
+    title: customer.name,
+    body: `
+      <div class="order-drawer-content">
+        <div class="admin-detail-section">
+          <h3>${escapeHtml(customer.name)}</h3>
+          <p>${escapeHtml(customer.email)}<br />${escapeHtml(customer.phone || "")}</p>
+        </div>
+        <div class="product-spec-grid">
+          <article><span>Pedidos</span><strong>${customer.orders}</strong></article>
+          <article><span>Total comprado</span><strong>${money.format(customer.totalSpent)}</strong></article>
+          <article><span>Último pedido</span><strong>${customer.lastOrderAt ? dateTime.format(new Date(customer.lastOrderAt)) : "Sem pedidos"}</strong></article>
+        </div>
+        <div class="admin-detail-section">
+          <h4>Pedidos realizados</h4>
+          ${
+            orders
+              .map(
+                (order) => `
+                  <button class="order-card as-button" type="button" data-view-order="${order.id}">
+                    <header><strong>${escapeHtml(order.id)}</strong><span class="status-pill warn">${escapeHtml(order.status)}</span></header>
+                    <p>${money.format(order.total)} · ${dateTime.format(new Date(order.createdAt))}</p>
+                  </button>
+                `,
+              )
+              .join("") || `<p>Nenhum pedido encontrado.</p>`
+          }
+        </div>
+      </div>
+    `,
+  });
+}
+
+function renderAdminCustomers() {
+  return renderAdminCustomersList();
 }
 
 function renderAdminReports() {
@@ -1991,161 +2558,125 @@ function renderAdminLogs() {
   `;
 }
 
-function renderAdminSettings() {
+function settingInput(name, label, type = "text") {
   return `
-    <div class="panel">
-      <div class="panel-head">
-        <div>
-          <h3>Configurações da loja</h3>
-          <p>Dados usados na vitrine, checkout e comunicação com clientes.</p>
-        </div>
-      </div>
-      <form class="form-grid" data-settings-form>
-        <div class="notice wide-field">
-          Mercado Pago: <strong>${state.payment.mercadoPagoConfigured ? "token configurado" : "token não configurado"}</strong>.
-          Para pagamento real, rode o servidor com <strong>MERCADO_PAGO_ACCESS_TOKEN</strong> e configure uma URL pública HTTPS para webhooks quando publicar.
-        </div>
-        <label>
-          <span>Nome do site</span>
-          <input name="siteName" type="text" value="${escapeHtml(state.settings.siteName || "Facas Brazão")}" required />
-        </label>
-        <label>
-          <span>Título SEO</span>
-          <input name="seoTitle" type="text" value="${escapeHtml(state.settings.seoTitle || settingFallbacks.seoTitle)}" />
-        </label>
-        <label>
-          <span>Chamada do topo</span>
-          <input name="heroEyebrow" type="text" value="${escapeHtml(state.settings.heroEyebrow || settingFallbacks.heroEyebrow)}" />
-        </label>
-        <label>
-          <span>Título da vitrine</span>
-          <input name="storeTitle" type="text" value="${escapeHtml(state.settings.storeTitle || settingFallbacks.storeTitle)}" />
-        </label>
-        <label>
-          <span>Título da janela de acesso</span>
-          <input name="clientAreaTitle" type="text" value="${escapeHtml(state.settings.clientAreaTitle || settingFallbacks.clientAreaTitle)}" />
-        </label>
-        <label>
-          <span>Título da área admin</span>
-          <input name="adminAreaTitle" type="text" value="${escapeHtml(state.settings.adminAreaTitle || settingFallbacks.adminAreaTitle)}" />
-        </label>
-        <label>
-          <span>Título do rodapé</span>
-          <input name="footerTitle" type="text" value="${escapeHtml(state.settings.footerTitle || settingFallbacks.footerTitle)}" />
-        </label>
-        <label>
-          <span>WhatsApp</span>
-          <input name="whatsapp" type="text" value="${escapeHtml(state.settings.whatsapp || "")}" />
-        </label>
-        <label>
-          <span>Chave PIX</span>
-          <input name="pixKey" type="text" value="${escapeHtml(state.settings.pixKey || "")}" />
-        </label>
-        <label>
-          <span>Frete padrão</span>
-          <input name="shippingFee" type="number" min="0" step="0.01" value="${Number(state.settings.shippingFee || 0)}" />
-        </label>
-        <label>
-          <span>Frete grátis a partir de</span>
-          <input name="freeShippingFrom" type="number" min="0" step="0.01" value="${Number(state.settings.freeShippingFrom || 0)}" />
-        </label>
-        <label class="wide-field">
-          <span>URL pública da loja</span>
-          <input name="publicUrl" type="url" placeholder="https://www.facasbrazao.com.br" value="${escapeHtml(state.settings.publicUrl || state.payment.publicUrl || "")}" />
-        </label>
-        <label class="wide-field">
-          <span>Frase principal</span>
-          <textarea name="tagline" rows="3">${escapeHtml(state.settings.tagline || settingFallbacks.tagline)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Descrição SEO</span>
-          <textarea name="seoDescription" rows="2">${escapeHtml(state.settings.seoDescription || settingFallbacks.seoDescription)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Texto da vitrine</span>
-          <textarea name="storeSubtitle" rows="2">${escapeHtml(state.settings.storeSubtitle || settingFallbacks.storeSubtitle)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Texto da janela de acesso</span>
-          <textarea name="clientAreaText" rows="2">${escapeHtml(state.settings.clientAreaText || settingFallbacks.clientAreaText)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Texto da área admin</span>
-          <textarea name="adminAreaText" rows="2">${escapeHtml(state.settings.adminAreaText || settingFallbacks.adminAreaText)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Política de envio</span>
-          <textarea name="shippingPolicy" rows="3">${escapeHtml(state.settings.shippingPolicy || settingFallbacks.shippingPolicy)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Política de troca</span>
-          <textarea name="exchangePolicy" rows="3">${escapeHtml(state.settings.exchangePolicy || settingFallbacks.exchangePolicy)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Garantia da loja</span>
-          <textarea name="warrantyPolicy" rows="3">${escapeHtml(state.settings.warrantyPolicy || settingFallbacks.warrantyPolicy)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Cuidados gerais</span>
-          <textarea name="carePolicy" rows="3">${escapeHtml(state.settings.carePolicy || settingFallbacks.carePolicy)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Mensagem WhatsApp produto</span>
-          <textarea name="whatsappProductMessage" rows="2">${escapeHtml(state.settings.whatsappProductMessage || settingFallbacks.whatsappProductMessage)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Mensagem WhatsApp checkout</span>
-          <textarea name="whatsappCheckoutMessage" rows="2">${escapeHtml(state.settings.whatsappCheckoutMessage || settingFallbacks.whatsappCheckoutMessage)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Mensagem WhatsApp atendimento</span>
-          <textarea name="whatsappSupportMessage" rows="2">${escapeHtml(state.settings.whatsappSupportMessage || settingFallbacks.whatsappSupportMessage)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Texto do rodapé</span>
-          <textarea name="footerText" rows="2">${escapeHtml(state.settings.footerText || settingFallbacks.footerText)}</textarea>
-        </label>
-        <label class="wide-field">
-          <span>Endereço ou região de atendimento</span>
-          <textarea name="footerAddress" rows="2">${escapeHtml(state.settings.footerAddress || settingFallbacks.footerAddress)}</textarea>
-        </label>
-        <label>
-          <span>Horário de atendimento</span>
-          <input name="footerHours" type="text" value="${escapeHtml(state.settings.footerHours || settingFallbacks.footerHours)}" />
-        </label>
-        <label>
-          <span>Documento ou aviso legal</span>
-          <input name="footerDocument" type="text" value="${escapeHtml(state.settings.footerDocument || settingFallbacks.footerDocument)}" />
-        </label>
-        <label class="wide-field">
-          <span>Aviso de maioridade</span>
-          <textarea name="legalPolicy" rows="3">${escapeHtml(state.settings.legalPolicy || settingFallbacks.legalPolicy)}</textarea>
-        </label>
-        <button class="button button-primary wide-field" type="submit">Salvar configurações</button>
-        <p class="form-status wide-field" role="status"></p>
-      </form>
-    </div>
-    <div class="panel">
-      <div class="panel-head">
-        <div>
-          <h3>Segurança do admin</h3>
-          <p>Troque a senha padrão antes de publicar a loja.</p>
-        </div>
-      </div>
-      <form class="form-grid" data-password-form>
-        <label>
-          <span>Senha atual</span>
-          <input name="currentPassword" type="password" required />
-        </label>
-        <label>
-          <span>Nova senha</span>
-          <input name="newPassword" type="password" minlength="6" required />
-        </label>
-        <button class="button button-primary wide-field" type="submit">Alterar senha</button>
-        <p class="form-status wide-field" role="status"></p>
-      </form>
-    </div>
+    <label>
+      <span>${label}</span>
+      <input name="${name}" type="${type}" value="${escapeHtml(state.settings[name] ?? "")}" />
+    </label>
   `;
+}
+
+function settingTextarea(name, label, rows = 3) {
+  return `
+    <label class="wide-field">
+      <span>${label}</span>
+      <textarea name="${name}" rows="${rows}">${escapeHtml(state.settings[name] ?? "")}</textarea>
+    </label>
+  `;
+}
+
+function renderSettingsFields() {
+  const tab = state.activeSettingsTab;
+  if (tab === "visual") {
+    return `
+      ${settingInput("primaryColor", "Cor principal", "color")}
+      ${settingInput("accentColor", "Cor de destaque", "color")}
+      ${settingInput("dangerColor", "Cor de alerta", "color")}
+      ${settingInput("heroImage", "Imagem principal")}
+      ${settingInput("announcementText", "Aviso comercial")}
+      ${settingTextarea("customCss", "CSS extra", 6)}
+    `;
+  }
+  if (tab === "contact") {
+    return `
+      ${settingInput("footerAddress", "Endereço/região")}
+      ${settingInput("footerHours", "Horário")}
+      ${settingInput("footerDocument", "Aviso legal")}
+      ${settingInput("whatsapp", "WhatsApp")}
+    `;
+  }
+  if (tab === "whatsapp") {
+    return `
+      ${settingTextarea("whatsappProductMessage", "Mensagem produto", 2)}
+      ${settingTextarea("whatsappCheckoutMessage", "Mensagem checkout", 2)}
+      ${settingTextarea("whatsappSupportMessage", "Mensagem atendimento", 2)}
+    `;
+  }
+  if (tab === "delivery") {
+    return `
+      ${settingInput("shippingFee", "Frete padrão", "number")}
+      ${settingInput("freeShippingFrom", "Frete grátis a partir de", "number")}
+      ${settingTextarea("shippingPolicy", "Política de envio")}
+      ${settingTextarea("exchangePolicy", "Política de troca")}
+      ${settingTextarea("warrantyPolicy", "Garantia")}
+      ${settingTextarea("carePolicy", "Cuidados gerais")}
+    `;
+  }
+  if (tab === "payment") {
+    return `
+      <div class="notice wide-field">Mercado Pago: <strong>${state.payment.mercadoPagoConfigured ? "token configurado" : "token não configurado"}</strong>.</div>
+      ${settingInput("pixKey", "Chave PIX")}
+      ${settingInput("publicUrl", "URL pública da loja", "url")}
+    `;
+  }
+  if (tab === "seo") {
+    return `
+      ${settingInput("seoTitle", "Título SEO")}
+      ${settingTextarea("seoDescription", "Descrição SEO", 2)}
+      ${settingTextarea("legalPolicy", "Segurança/maioridade")}
+    `;
+  }
+  return `
+    ${settingInput("siteName", "Nome da loja")}
+    ${settingInput("heroEyebrow", "Chamada do topo")}
+    ${settingInput("storeTitle", "Título da vitrine")}
+    ${settingInput("clientAreaTitle", "Título da área do cliente")}
+    ${settingInput("adminAreaTitle", "Título da área admin")}
+    ${settingInput("footerTitle", "Título do rodapé")}
+    ${settingTextarea("tagline", "Frase principal")}
+    ${settingTextarea("storeSubtitle", "Texto da vitrine", 2)}
+    ${settingTextarea("clientAreaText", "Texto da área do cliente", 2)}
+    ${settingTextarea("adminAreaText", "Texto da área admin", 2)}
+    ${settingTextarea("footerText", "Texto do rodapé", 2)}
+  `;
+}
+
+function renderAdminSettingsTabbed() {
+  const tabs = [
+    ["store", "Dados da loja"],
+    ["visual", "Identidade visual"],
+    ["contact", "Contato"],
+    ["whatsapp", "WhatsApp"],
+    ["delivery", "Entrega"],
+    ["payment", "Pagamento"],
+    ["seo", "SEO e segurança"],
+    ["password", "Senha"],
+  ];
+  return `
+    ${adminPageHead("Configurações", "Ajustes separados por assunto para evitar formulários longos.", "")}
+    <div class="settings-tabs" role="group" aria-label="Seções de configurações">
+      ${tabs.map(([id, label]) => `<button class="tab-button ${state.activeSettingsTab === id ? "is-active" : ""}" type="button" data-settings-tab="${id}">${label}</button>`).join("")}
+    </div>
+    ${
+      state.activeSettingsTab === "password"
+        ? `<div class="panel"><form class="form-grid" data-password-form>
+            <label><span>Senha atual</span><input name="currentPassword" type="password" required /></label>
+            <label><span>Nova senha</span><input name="newPassword" type="password" minlength="6" required /></label>
+            <button class="button button-primary wide-field" type="submit">Alterar senha</button>
+            <p class="form-status wide-field" role="status"></p>
+          </form></div>`
+        : `<div class="panel"><form class="form-grid" data-settings-form>
+            ${renderSettingsFields()}
+            <button class="button button-primary wide-field" type="submit">Salvar configurações</button>
+            <p class="form-status wide-field" role="status"></p>
+          </form></div>`
+    }
+  `;
+}
+
+function renderAdminSettings() {
+  return renderAdminSettingsTabbed();
 }
 
 async function loadMyOrders() {
@@ -2159,11 +2690,13 @@ async function loadMyOrders() {
 
 async function loadAdminData() {
   if (!state.user || state.user.role !== "admin") return;
-  const [summary, products, orders, customers, coupons, reviews, reports, cash, logs] = await Promise.all([
+  const [summary, products, categories, orders, customers, quotes, coupons, reviews, reports, cash, logs] = await Promise.all([
     api("/api/admin/summary"),
     api("/api/admin/products"),
+    api("/api/admin/categories"),
     api("/api/admin/orders"),
     api("/api/admin/customers"),
+    api("/api/admin/orcamentos"),
     api("/api/admin/coupons"),
     api("/api/admin/reviews"),
     api("/api/admin/reports"),
@@ -2172,8 +2705,10 @@ async function loadAdminData() {
   ]);
   state.admin.summary = summary.summary;
   state.admin.products = products.products;
+  state.admin.categories = categories.categories;
   state.admin.orders = orders.orders;
   state.admin.customers = customers.customers;
+  state.admin.quotes = quotes.orcamentos;
   state.admin.coupons = coupons.coupons;
   state.admin.reviews = reviews.reviews;
   state.admin.reports = reports.reports;
@@ -2184,9 +2719,11 @@ async function loadAdminData() {
 async function loadBootstrap() {
   const payload = await api("/api/bootstrap");
   state.settings = payload.settings;
+  state.csrfToken = payload.csrfToken || "";
   state.payment = payload.payment || state.payment;
   state.products = payload.products;
   state.user = payload.user;
+  if (state.user) await syncFavoritesWithServer();
   renderSettings();
   renderProducts();
   renderReviewShowcase();
@@ -2195,15 +2732,24 @@ async function loadBootstrap() {
   if (state.user?.role === "admin") await loadAdminData();
   renderClientPanel();
   renderAdminShell();
+  observeReveal();
   window.setTimeout(handleHashRoute, 0);
 }
 
 async function handlePaymentReturn() {
   const params = new URLSearchParams(window.location.search);
   const paymentId = params.get("payment_id") || params.get("collection_id");
-  const paymentStatus = params.get("payment");
+  const path = window.location.pathname;
+  const pathStatus = path.includes("/pagamento/sucesso")
+    ? "success"
+    : path.includes("/pagamento/pendente")
+      ? "pending"
+      : path.includes("/pagamento/falha")
+        ? "failure"
+        : "";
+  const paymentStatus = params.get("payment") || params.get("collection_status") || pathStatus;
 
-  if (paymentId && state.user) {
+  if (paymentId) {
     try {
       await api("/api/payments/mercadopago/sync", {
         method: "POST",
@@ -2214,16 +2760,16 @@ async function handlePaymentReturn() {
     } catch (error) {
       showToast(`Retorno de pagamento recebido: ${error.message}`);
     }
-  } else if (paymentStatus === "success") {
+  } else if (["success", "approved"].includes(paymentStatus)) {
     showToast("Pagamento aprovado. O pedido será atualizado pelo Mercado Pago.");
   } else if (paymentStatus === "pending") {
     showToast("Pagamento pendente. A loja atualizará o pedido assim que houver confirmação.");
-  } else if (paymentStatus === "failure") {
+  } else if (["failure", "rejected"].includes(paymentStatus)) {
     showToast("Pagamento não aprovado. Você pode tentar novamente ou combinar com a loja.");
   }
 
   if (paymentStatus || paymentId) {
-    const cleanUrl = `${window.location.pathname}${window.location.hash || ""}`;
+    const cleanUrl = window.location.pathname.startsWith("/pagamento/") ? "/" : `${window.location.pathname}${window.location.hash || ""}`;
     window.history.replaceState({}, "", cleanUrl);
   }
 }
@@ -2275,6 +2821,19 @@ async function logout() {
   showToast("Você saiu da conta.");
 }
 
+async function submitQuote(form) {
+  const data = new FormData(form);
+  const payload = Object.fromEntries(data.entries());
+  payload.engraving = data.get("engraving") === "on";
+  const response = await api("/api/orcamentos", {
+    method: "POST",
+    body: payload,
+  });
+  form.reset();
+  setFormStatus(form, `Orçamento ${response.orcamento.id} enviado. A loja vai responder pelo WhatsApp.`);
+  showToast("Orçamento enviado.");
+}
+
 async function submitOrder(form) {
   const data = new FormData(form);
   const payload = await api("/api/orders", {
@@ -2311,6 +2870,30 @@ async function submitOrder(form) {
   renderCheckoutSummary();
 }
 
+async function payOrderAgain(id) {
+  const payload = await api("/api/pagamentos/mercado-pago/preferencia", {
+    method: "POST",
+    body: { orderId: id },
+  });
+  showToast("Abrindo pagamento Mercado Pago.");
+  window.location.href = payload.payment.redirectUrl;
+}
+
+async function saveQuoteUpdate(form) {
+  const id = form.dataset.quoteId;
+  const data = new FormData(form);
+  const payload = await api(`/api/admin/orcamentos/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: Object.fromEntries(data.entries()),
+  });
+  const index = state.admin.quotes.findIndex((quote) => quote.id === id);
+  if (index >= 0) state.admin.quotes[index] = payload.orcamento;
+  setFormStatus(form, "Orçamento atualizado.");
+  showToast("Orçamento atualizado.");
+  await loadAdminData();
+  renderAdminShell();
+}
+
 async function uploadProductImage(file) {
   if (!file || !file.size) return "";
   const formData = new FormData();
@@ -2327,8 +2910,10 @@ function productPayloadFromForm(form) {
   return {
     name: data.get("name"),
     sku: data.get("sku"),
+    slug: data.get("slug"),
     category: data.get("category"),
     price: data.get("price"),
+    promoPrice: data.get("promoPrice"),
     cost: data.get("cost"),
     stock: data.get("stock"),
     minStock: data.get("minStock"),
@@ -2373,12 +2958,50 @@ async function saveProduct(form) {
   }
   state.editingProductId = null;
   await loadBootstrap();
+  closeAdminOverlay();
 }
 
 async function disableProduct(id) {
   await api(`/api/admin/products/${id}`, { method: "DELETE" });
   showToast("Produto desativado.");
   await loadBootstrap();
+  closeAdminOverlay();
+}
+
+function categoryPayloadFromForm(form) {
+  const data = new FormData(form);
+  return {
+    name: data.get("name"),
+    slug: data.get("slug"),
+    active: data.get("active") === "on",
+  };
+}
+
+async function saveCategory(form) {
+  const payload = categoryPayloadFromForm(form);
+  if (state.editingCategoryId) {
+    await api(`/api/admin/categories/${state.editingCategoryId}`, {
+      method: "PUT",
+      body: payload,
+    });
+    showToast("Categoria atualizada.");
+  } else {
+    await api("/api/admin/categories", {
+      method: "POST",
+      body: payload,
+    });
+    showToast("Categoria criada.");
+  }
+  state.editingCategoryId = null;
+  await loadBootstrap();
+  closeAdminOverlay();
+}
+
+async function deleteCategory(id) {
+  await api(`/api/admin/categories/${id}`, { method: "DELETE" });
+  showToast("Categoria removida.");
+  await loadBootstrap();
+  closeAdminOverlay();
 }
 
 function couponPayloadFromForm(form) {
@@ -2480,40 +3103,10 @@ async function saveEditorSettings(form) {
 
 async function saveSettings(form) {
   const data = new FormData(form);
+  const updates = Object.fromEntries(data.entries());
   await api("/api/admin/settings", {
     method: "PUT",
-    body: {
-      siteName: data.get("siteName"),
-      seoTitle: data.get("seoTitle"),
-      seoDescription: data.get("seoDescription"),
-      tagline: data.get("tagline"),
-      heroEyebrow: data.get("heroEyebrow"),
-      storeTitle: data.get("storeTitle"),
-      storeSubtitle: data.get("storeSubtitle"),
-      clientAreaTitle: data.get("clientAreaTitle"),
-      clientAreaText: data.get("clientAreaText"),
-      adminAreaTitle: data.get("adminAreaTitle"),
-      adminAreaText: data.get("adminAreaText"),
-      footerTitle: data.get("footerTitle"),
-      footerText: data.get("footerText"),
-      footerAddress: data.get("footerAddress"),
-      footerHours: data.get("footerHours"),
-      footerDocument: data.get("footerDocument"),
-      shippingPolicy: data.get("shippingPolicy"),
-      exchangePolicy: data.get("exchangePolicy"),
-      warrantyPolicy: data.get("warrantyPolicy"),
-      legalPolicy: data.get("legalPolicy"),
-      carePolicy: data.get("carePolicy"),
-      whatsappProductMessage: data.get("whatsappProductMessage"),
-      whatsappCheckoutMessage: data.get("whatsappCheckoutMessage"),
-      whatsappSupportMessage: data.get("whatsappSupportMessage"),
-      whatsapp: data.get("whatsapp"),
-      pixKey: data.get("pixKey"),
-      shippingFee: data.get("shippingFee"),
-      freeShippingFrom: data.get("freeShippingFrom"),
-      publicUrl: data.get("publicUrl"),
-      minAgeNotice: data.get("legalPolicy"),
-    },
+    body: settingsPayloadFromState(updates),
   });
   showToast("Configurações salvas.");
   await loadBootstrap();
@@ -2579,6 +3172,17 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  const routeAnchor = target.closest('a[href^="/"]');
+  if (routeAnchor && !routeAnchor.hasAttribute("download") && !routeAnchor.getAttribute("target")) {
+    const url = new URL(routeAnchor.href, window.location.href);
+    if (url.origin === window.location.origin && !url.pathname.startsWith("/api/")) {
+      event.preventDefault();
+      window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      handleHashRoute();
+      return;
+    }
+  }
+
   const scrollControl = target.closest("[data-scroll-target]");
   if (scrollControl) {
     event.preventDefault();
@@ -2596,6 +3200,19 @@ document.addEventListener("click", async (event) => {
 
   if (target.closest("[data-theme-toggle]")) {
     toggleTheme();
+    return;
+  }
+
+  if (target.closest("[data-toggle-nav]")) {
+    document.querySelector(".main-nav")?.classList.toggle("is-open");
+    return;
+  }
+
+  if (target.closest("[data-open-favorites]")) {
+    state.filters.favoritesOnly = true;
+    if (favoritesOnlyInput) favoritesOnlyInput.checked = true;
+    renderProducts();
+    scrollToSection("#loja");
     return;
   }
 
@@ -2626,7 +3243,7 @@ document.addEventListener("click", async (event) => {
 
   const favoriteButton = target.closest("[data-favorite-product]");
   if (favoriteButton) {
-    toggleFavorite(favoriteButton.dataset.favoriteProduct);
+    await toggleFavorite(favoriteButton.dataset.favoriteProduct);
     return;
   }
 
@@ -2634,6 +3251,7 @@ document.addEventListener("click", async (event) => {
   if (galleryButton) {
     const mainImage = document.querySelector("[data-product-main-image]");
     if (mainImage) mainImage.src = galleryButton.dataset.galleryImage;
+    document.querySelectorAll("[data-gallery-image]").forEach((button) => button.classList.toggle("is-active", button === galleryButton));
     return;
   }
 
@@ -2641,7 +3259,8 @@ document.addEventListener("click", async (event) => {
   if (viewProductButton) {
     const product = productById(viewProductButton.dataset.viewProduct);
     openProductDetail(viewProductButton.dataset.viewProduct);
-    if (product) window.history.pushState({}, "", `#produto=${encodeURIComponent(product.slug || product.id)}`);
+    if (product) window.history.pushState({}, "", `/produto/${encodeURIComponent(product.slug || product.id)}`);
+    updateRouteMeta();
     return;
   }
 
@@ -2695,6 +3314,7 @@ document.addEventListener("click", async (event) => {
     document.querySelectorAll("[data-category]").forEach((tab) => tab.classList.remove("is-active"));
     categoryButton.classList.add("is-active");
     renderProducts();
+    scrollToSection("#loja");
     return;
   }
 
@@ -2705,11 +3325,39 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  if (target.closest("[data-toggle-admin-nav]")) {
+    state.adminCollapsed = !state.adminCollapsed;
+    localStorage.setItem("facas-brazao-admin-collapsed", state.adminCollapsed ? "1" : "0");
+    renderAdminShell();
+    return;
+  }
+
+  const settingsTabButton = target.closest("[data-settings-tab]");
+  if (settingsTabButton) {
+    state.activeSettingsTab = settingsTabButton.dataset.settingsTab;
+    renderAdminShell();
+    return;
+  }
+
+  if (target.closest("[data-close-admin-overlay]")) {
+    closeAdminOverlay();
+    return;
+  }
+
+  if (target.closest("[data-open-product-form]")) {
+    openProductForm();
+    return;
+  }
+
+  const viewAdminProductButton = target.closest("[data-view-admin-product]");
+  if (viewAdminProductButton) {
+    openAdminProductView(viewAdminProductButton.dataset.viewAdminProduct);
+    return;
+  }
+
   const editProductButton = target.closest("[data-edit-product]");
   if (editProductButton) {
-    state.editingProductId = editProductButton.dataset.editProduct;
-    renderAdminShell();
-    document.querySelector("[data-product-form]")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    openProductForm(editProductButton.dataset.editProduct);
     return;
   }
 
@@ -2721,7 +3369,60 @@ document.addEventListener("click", async (event) => {
 
   const disableButton = target.closest("[data-disable-product]");
   if (disableButton) {
-    await disableProduct(disableButton.dataset.disableProduct);
+    openDeleteProductConfirm(disableButton.dataset.disableProduct);
+    return;
+  }
+
+  const confirmDisableProduct = target.closest("[data-confirm-disable-product]");
+  if (confirmDisableProduct) {
+    await disableProduct(confirmDisableProduct.dataset.confirmDisableProduct);
+    return;
+  }
+
+  if (target.closest("[data-open-category-form]")) {
+    openCategoryForm();
+    return;
+  }
+
+  const editCategoryButton = target.closest("[data-edit-category]");
+  if (editCategoryButton) {
+    openCategoryForm(editCategoryButton.dataset.editCategory);
+    return;
+  }
+
+  const deleteCategoryButton = target.closest("[data-delete-category]");
+  if (deleteCategoryButton) {
+    openDeleteCategoryConfirm(deleteCategoryButton.dataset.deleteCategory);
+    return;
+  }
+
+  const confirmDeleteCategory = target.closest("[data-confirm-delete-category]");
+  if (confirmDeleteCategory) {
+    await deleteCategory(confirmDeleteCategory.dataset.confirmDeleteCategory);
+    return;
+  }
+
+  const viewOrderButton = target.closest("[data-view-order]");
+  if (viewOrderButton) {
+    openOrderDrawer(viewOrderButton.dataset.viewOrder);
+    return;
+  }
+
+  const payOrderButton = target.closest("[data-pay-order]");
+  if (payOrderButton) {
+    await payOrderAgain(payOrderButton.dataset.payOrder);
+    return;
+  }
+
+  const viewQuoteButton = target.closest("[data-view-quote]");
+  if (viewQuoteButton) {
+    openQuoteDrawer(viewQuoteButton.dataset.viewQuote);
+    return;
+  }
+
+  const viewCustomerButton = target.closest("[data-view-customer]");
+  if (viewCustomerButton) {
+    openCustomerDrawer(viewCustomerButton.dataset.viewCustomer);
     return;
   }
 
@@ -2745,8 +3446,11 @@ document.addEventListener("submit", async (event) => {
   try {
     if (form.matches("[data-login-form]")) await login(form);
     if (form.matches("[data-register-form]")) await register(form);
+    if (form.matches("[data-quote-form]")) await submitQuote(form);
     if (form.matches("#checkoutForm")) await submitOrder(form);
+    if (form.matches("[data-quote-update-form]")) await saveQuoteUpdate(form);
     if (form.matches("[data-product-form]")) await saveProduct(form);
+    if (form.matches("[data-category-form]")) await saveCategory(form);
     if (form.matches("[data-coupon-form]")) await saveCoupon(form);
     if (form.matches("[data-review-form]")) await saveReview(form);
     if (form.matches("[data-settings-form]")) await saveSettings(form);
@@ -2767,6 +3471,7 @@ document.addEventListener("change", async (event) => {
     state.checkout.cep = target.value;
     try {
       await refreshCheckoutPricing();
+      await fillAddressFromCep(target.value);
     } catch (error) {
       showToast(error.message);
     }
@@ -2776,6 +3481,7 @@ document.addEventListener("change", async (event) => {
     state.checkout.couponCode = target.value.trim();
     try {
       await refreshCheckoutPricing();
+      await fillAddressFromCep(state.checkout.cep);
     } catch (error) {
       state.checkout.coupon = { message: error.message };
       renderCheckoutSummary();
@@ -2792,6 +3498,16 @@ document.addEventListener("change", async (event) => {
 document.addEventListener("input", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement)) return;
+  if (target.matches("[data-admin-product-search]")) {
+    state.adminSearch.products = target.value;
+    renderAdminShell();
+    return;
+  }
+  if (target.matches("[data-admin-customer-search]")) {
+    state.adminSearch.customers = target.value;
+    renderAdminShell();
+    return;
+  }
   if (!target.matches('#checkoutForm input[name="cep"], #checkoutForm input[name="couponCode"]')) return;
 
   window.clearTimeout(refreshCheckoutPricing.timer);
@@ -2857,9 +3573,25 @@ authModal?.addEventListener("click", (event) => {
 });
 
 window.addEventListener("hashchange", handleHashRoute);
+window.addEventListener("popstate", handleHashRoute);
 
 document.addEventListener("keydown", (event) => {
+  const adminOverlay = document.querySelector("[data-admin-overlay]");
+  if (adminOverlay && event.key === "Tab") {
+    const nodes = focusableNodes(adminOverlay);
+    if (!nodes.length) return;
+    const first = nodes[0];
+    const last = nodes[nodes.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
   if (event.key === "Escape") {
+    closeAdminOverlay();
     closeCart();
     closeCheckout();
     closeProductDetail();
@@ -2876,6 +3608,6 @@ loadBootstrap()
   console.error(error);
   document.body.insertAdjacentHTML(
     "afterbegin",
-    `<div class="notice" style="margin: 18px">Não foi possível conectar ao servidor local. Rode <strong>npm start</strong> ou abra pelo endereço do servidor.</div>`,
+    `<div class="notice" style="margin: 18px">Não foi possível conectar ao servidor local. Rode <strong>python run.py</strong> ou abra pelo endereço do servidor.</div>`,
   );
 });
